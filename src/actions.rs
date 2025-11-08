@@ -75,6 +75,8 @@ pub async fn send_two_factor_email(
         .await
 }
 
+// TODO DELETE THIS NOTE
+// You don't
 pub fn unlock<S: std::hash::BuildHasher>(
     email: &str,
     password: &crate::locked::Password,
@@ -89,6 +91,8 @@ pub fn unlock<S: std::hash::BuildHasher>(
     crate::locked::Keys,
     std::collections::HashMap<String, crate::locked::Keys>,
 )> {
+    // TODO if pin status active then don't try and load identity and just go for it?
+    // or does profile go into identity?
     let identity = crate::identity::Identity::new(
         email,
         password,

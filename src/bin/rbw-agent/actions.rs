@@ -373,6 +373,8 @@ async fn login_success(
     Ok(())
 }
 
+// PIN
+// Do I need to branch here?
 async fn unlock_state(
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
     environment: &rbw::protocol::Environment,
@@ -393,6 +395,9 @@ async fn unlock_state(
         let memory = db.memory;
         let parallelism = db.parallelism;
 
+        // TODO Check for PIN (unless there is a syncing thing?)
+        // How to access config? Can I access crate::config? that seems like an anti-pattern...
+        // I'm starting to think maybe the config is the best course of action... ok yeah
         let Some(protected_key) = db.protected_key else {
             return Err(anyhow::anyhow!(
                 "failed to find protected key in db"
@@ -415,6 +420,7 @@ async fn unlock_state(
             } else {
                 None
             };
+            // TODO PIN write pin flow here as well
             let password = rbw::pinentry::getpin(
                 &config_pinentry().await?,
                 "Master Password",

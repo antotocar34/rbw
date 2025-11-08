@@ -1,6 +1,8 @@
 use sha2::Digest as _;
 
 pub struct State {
+    // TODO do I need to modify this for pin unlock?
+    // I don't think so
     pub priv_key: Option<rbw::locked::Keys>,
     pub org_keys:
         Option<std::collections::HashMap<String, rbw::locked::Keys>>,

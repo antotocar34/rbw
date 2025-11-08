@@ -243,6 +243,15 @@ pub enum Error {
 
     #[error("invalid kdf type: {ty}")]
     InvalidKdfType { ty: String },
+
+    #[error("Error decrypting key wrapped with pin. Is your PIN correct?")]
+    PinKekDecryption,
+
+    #[error("Pin Decryption Error")]
+    PinKekEncryption,
+
+    #[error("Error in the encrypting master key")]
+    ChaChaEncryption,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
