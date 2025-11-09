@@ -1,3 +1,4 @@
+// #![cfg(feature = "pin")]
 /*
 This module implements cryptography operations relating to the PIN feature.
 

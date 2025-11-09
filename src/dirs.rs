@@ -71,6 +71,9 @@ pub fn ssh_agent_socket_file() -> std::path::PathBuf {
     runtime_dir().join("ssh-agent-socket")
 }
 
+// pub fn age_identity_file() -> std::path::PathBuf { cache_dir().join("")}
+// TODO maybe we should just serialize everyything, like metadata, nonce and also age encrypted key
+
 fn config_dir() -> std::path::PathBuf {
     let project_dirs =
         directories::ProjectDirs::from("", "", &profile()).unwrap();

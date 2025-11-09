@@ -252,6 +252,9 @@ pub enum Error {
 
     #[error("Error in the encrypting master key")]
     ChaChaEncryption,
+
+    #[error("Haven't handled this error yet")]
+    NotImplemented // TODO remove after hacking
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
