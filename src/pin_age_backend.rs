@@ -1,12 +1,13 @@
+use crate::prelude::*;
 use std::fs;
 use std::io::{BufReader, Read, Write};
 
 // #![cfg(feature = "pin")]
 use std::path::PathBuf;
 use std::fs::File;
+use std::os::unix::fs::OpenOptionsExt;
 use serde::{Deserialize, Serialize};
-use age::{plugin, NoCallbacks, Decryptor};
-use crate::api::LinkedIdType::IdentityEmail;
+use age::{plugin, Decryptor};
 use crate::locked::Vec;
 use crate::error::{Error, Result};
 use crate::config::Config;
@@ -28,6 +29,7 @@ impl PinBackendConfig {
         let age_identity = fs::read_to_string(&self.identity_file_path)?;
 
         // Remove hashes
+        // TODO improve parsing code
         let cleaned_string: String = age_identity
             .lines()
             .filter(|s| !s.starts_with('#'))
@@ -51,7 +53,6 @@ trait PinBackend {
     fn store_local_secret(&self, kek: Vec, config: &Config) -> Result<()>;
 }
 
-
 struct AgePinBackend; // TODO figure out what to do here
 
 impl PinBackend for AgePinBackend {
@@ -67,7 +68,7 @@ impl PinBackend for AgePinBackend {
         let identity_plugin = plugin::IdentityPluginV1::new(
             &identity.plugin(),
             &[identity.clone()],
-            NoCallbacks
+            age::NoCallbacks
         )?;
 
         let reader = BufReader::new(
@@ -80,7 +81,7 @@ impl PinBackend for AgePinBackend {
         let mut kek = Vec::new();
         kek.extend(std::iter::repeat_n(0, 32));
 
-        decrypted_reader.read(kek.data_mut())?;
+        decrypted_reader.read_exact(kek.data_mut())?;
 
         Ok(kek)
     }
@@ -108,8 +109,13 @@ impl PinBackend for AgePinBackend {
                 .as_ref()
                 .ok_or(Error::NotImplemented)?;
 
-            File::create(encrypted_age_path)
-                .map_err(|_| Error::NotImplemented)?
+            let file = fs::OpenOptions::new()
+                .write(true)
+                .mode(0o600)
+                .create(true)
+                .open(encrypted_age_path)
+                .map_err(|_| Error::NotImplemented)?;
+            file
         };
 
         let encryptor = age::Encryptor::with_recipients(std::iter::once(recipient))
@@ -135,7 +141,13 @@ mod tests {
     use crate::config::Config;
 
     const DUMMY_IDENTITY: &str = "AGE-PLUGIN-SE-1QJPQZSP3SGQNCVYP75XQYUNTXXQ7UVQTPSPKY6TYQSZ86D7RUGCYSRQRWP6KYPZPQ338C2YRPH6W355K58YUN5TQLEG2K2RRTKG4TCN9HRJVEGFWGC5C55K8S3ZN6NH4TEK7KC9JDZDGRE83DVSLDMJR6KYD4QKE4NRWS868XQYQCQMJDDHSYQGQXQRSCQNTWSPQZPPS9CXQYAMTQS5036M7ACXRYG640MLP7KL0TDE240HK3F429FHEYMM6GXGCJNNFMNWZ0Q5EZ26AXD3NQPCVQF3XXQSPPYCQWRQZDDMQYQGZXQTSCQMTD9JQGY9HGFW0WVD4FN26Y35VCX0N9K0CXQNSCQMJDDKSGG9UQ9UDHE398787C2YY5WW8E6T8W5H3NHKTVM8TSHLAC0AA0J3CKVCYYRQZV4JRZ0PS8GXQXCTRDSCNXVQGPSPK7CMTQYQSZVQFPSZX7ER9DSQSZQFSPYXQGMMNVAHQZQGPXQRSCQN0VYQSZQFSPQXQXMMTVSQSZQGV24NPH";
+    const DUMMY_KEY: &[u8; 32] = &[b'0'; 32];
 
+    fn create_temp_file_of_contents(contents: &[u8]) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(contents).unwrap();
+        file
+    }
 
     fn create_vec(bytes: &[u8]) -> crate::locked::Vec {
         let mut vec = crate::locked::Vec::new();
@@ -153,8 +165,10 @@ mod tests {
 
     #[test]
     fn pin_age_parse_identity_file() {
+        let identity_file = create_temp_file_of_contents(DUMMY_IDENTITY.as_bytes());
+
         let pin_config = PinBackendConfig {
-            identity_file_path: "test_assets/test_age_identity".parse().unwrap(),
+            identity_file_path: identity_file.path().into(),
             encrypted_local_secret_file: None
         };
 
@@ -166,6 +180,8 @@ mod tests {
 
     #[test]
     fn pin_age_plugin_encrypt_decrypt() {
+        let identity_file = create_temp_file_of_contents(DUMMY_IDENTITY.as_bytes());
+        let encrypted_local_secret_file = create_temp_file_of_contents(&[]);
         let config = Config {
             email: None,
             sso_id: None,
@@ -180,8 +196,8 @@ mod tests {
             device_id: None,
             pin_config: Some(
                 PinBackendConfig {
-                    identity_file_path: PathBuf::from("test_assets/test_age_identity"),
-                    encrypted_local_secret_file: Some(PathBuf::from("test_assets/kek.age"))
+                    identity_file_path: identity_file.path().into(),
+                    encrypted_local_secret_file: Some(encrypted_local_secret_file.path().into())
                 }
             )
         };

@@ -171,7 +171,6 @@ mod tests {
         out
     }
 
-
     #[test]
     fn pin_encrypt_decrypt() {
         let key_content = [48u8; 64];
