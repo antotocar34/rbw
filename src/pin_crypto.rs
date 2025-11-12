@@ -1,95 +1,173 @@
-// #![cfg(feature = "pin")]
+#![cfg(feature = "pin")]
 /*
 This module implements cryptography operations relating to the PIN feature.
 
 In particular,
 
 */
+use std::collections::HashMap;
 use argon2::{
     Argon2,
     password_hash::{
     rand_core::OsRng,
-    PasswordHash, PasswordHasher, PasswordVerifier, SaltString
+    PasswordVerifier, SaltString
     }
 };
-use crate::locked::{ Vec as LockedVec, Keys };
+use std::os::unix::fs::{OpenOptionsExt};
+use std::path::PathBuf;
+use anyhow::anyhow;
+use crate::locked::{Vec as LockedVec, Keys, Password};
 use crate::error::{ Result, Error };
 
-use chacha20poly1305::{aead::{Buffer, Aead, AeadCore, KeyInit }, AeadInPlace, ChaCha20Poly1305, Nonce};
-use rustix::path::Arg;
-use zeroize::{Zeroize, Zeroizing};
-// TODO
-// How to check if PIN is set?
-// Can't be config, will have to be something from the agent state right?
-// But then if agent is killed, do we really want the pin to be cleared?
-// So maybe we do:
-//   - Check if pin is set in config
-//   - Check if there is an encrypted local secret for the pin (in practice if there is an age file?)
-//   - If both are there then we go for it and unlock
-// Alternatives:
-//    - DB -- I think this is a no go, since it's updated from API and live's in agent state(?)
-//    - State -- Doesn't persist after reboot
-//    -
+use chacha20poly1305::{
+    aead::{Buffer, AeadCore, KeyInit}, // TODO figure out
+    AeadInPlace,
+    ChaCha20Poly1305,
+    Nonce,
 
-// TODO build a map of where this fits ino the codebase
-//
-// So we have the agent and the client
-// -- Agent
-//  Holds the keys in memory
-//  Encrypts the dek when you lock it -- WRONG, it simply clears the key, never writes the encrypted to disk!
-//      -- We are writing the encrypted symmetric key to disk :-O (is this crazy or is it ok?)
-//  Decrypts the dek when you unlock it -- decrypt_locked_symmetric so we need to keep the key in identity.keys
-//  unlock_state get's the input from the user
+};
+use serde::{Serialize, Deserialize};
 
-// -- Client
-//  Can make requests to the agent
-//
-//
-// When Identity::new is called the `enc_key` is derived
+const KEK_LEN: usize = 32;
 
-// TODO change pin to Vec
-// TODO this doesn't need to output to a Keys, only some Vec
-// TODO Figure out what is happening with the hmac stuff in Identity::new
-fn derive_key_from_pin(pin: Option<LockedVec>, local_secret: LockedVec) -> Result<LockedVec> { // TODO change result type to Vec
+#[derive(Serialize, Deserialize, Clone)]
+pub struct WrappedKeys {
+    #[serde(with = "serde_bytes")]
+    wrapped_keys: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    nonce: [u8; 12]
+}
+
+impl WrappedKeys {
+    pub fn bytes(&self) -> &[u8] {
+       self.wrapped_keys.as_slice()
+    }
+    pub fn new(wrapped_keys: Vec<u8>, nonce: Nonce) -> Self {
+        Self {
+            wrapped_keys,
+            nonce: (*nonce.as_slice()).try_into().unwrap()
+        }
+    }
+    fn nonce(&self) -> Nonce {
+        (self.nonce).try_into().unwrap() // Nonce is effectively defined to be a [u8; 12]
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PinState {
+    wrapped_keys: WrappedKeys,
+    wrapped_org_keys: HashMap<String,WrappedKeys>,
+    salt: String,
+    kdf_params: Argon2Params,
+    empty_pin: bool
+}
+
+impl PinState {
+    pub fn new(wrapped_keys: WrappedKeys, wrapped_org_keys: HashMap<String, WrappedKeys>, salt: SaltString, kdf_params: Argon2Params, empty_pin: bool) -> anyhow::Result<Self> {
+        let slf = Self {
+            wrapped_keys,
+            wrapped_org_keys,
+            salt: salt.to_string(),
+            kdf_params,
+            empty_pin
+        };
+        Ok(slf)
+    }
+
+    pub fn unpack(&self) -> anyhow::Result<(WrappedKeys, HashMap<String, WrappedKeys>, SaltString, Argon2Params, bool)> {
+        Ok((
+            self.wrapped_keys.clone(),
+            self.wrapped_org_keys.clone(),
+            {
+                match SaltString::from_b64(self.salt.as_str()) {
+                    Ok(salt) => salt,
+                    Err(e) => anyhow::bail!("Error deserializing salt: {}", e)
+                }
+            },
+            self.kdf_params.clone(),
+            self.empty_pin
+        ))
+    }
+
+    pub fn read_from_file(path: PathBuf) -> anyhow::Result<Self> {
+        let file = std::fs::File::open(path)?;
+        let reader = std::io::BufReader::new(file);
+        serde_json::from_reader(reader).map_err(|e| anyhow!(e))
+    }
+
+    pub fn write_to_file(&self) -> anyhow::Result<()> {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .mode(0o600)
+            .write(true)
+            .truncate(true)
+            .open(crate::dirs::pin_state_file())?;
+
+        let mut writer = std::io::BufWriter::new(file);
+        serde_json::to_writer(&mut writer, self)?;
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Argon2Params {
+    memory: u32,
+    iterations: u32,
+    parallelism: u32
+}
+
+impl Argon2Params {
+    pub fn new() -> Self {
+        Self {
+            memory: 64 * 1024,
+            iterations: 3,
+            parallelism: 4
+        }
+    }
+    pub fn to_params(&self) -> Result<argon2::Params> {
+        argon2::Params::new(
+            self.memory,
+            self.iterations,
+            self.parallelism,
+            Some(KEK_LEN) // Size of the derived key
+        ).map_err(|_| Error::Argon2)
+    }
+}
+
+// TODO change pin to password type?
+pub fn derive_kek_from_pin(
+    pin: Option<&Password>,
+    local_secret: &LockedVec,
+    salt: &SaltString,
+    kdf_params: &Argon2Params
+) -> Result<LockedVec> {
 
     let argon2_config = Argon2::new_with_secret(
         local_secret.data(),
         argon2::Algorithm::Argon2id,
         argon2::Version::V0x13,
-        argon2::Params::new( // TODO find a good argon2 config
-            64 * 1024,
-            2,
-            2,
-            Some(32)
-        ).map_err(|_| Error::Argon2)?
+        kdf_params.to_params()?
     ).map_err(|_| Error::Argon2)?; // TODO clean this up
 
 
     let mut pin_key = LockedVec::new();
-    pin_key.extend(std::iter::repeat_n(0, 32));
+    pin_key.extend(std::iter::repeat_n(0, KEK_LEN));
 
-    let salt = SaltString::generate(&mut OsRng); // TODO this should be imported from metadata associated to the pin
-                                                           //
 
     Argon2::hash_password_into(
         &argon2_config,
         pin.as_ref()
-            .map(|pin| pin.data())
+            .map(|pin| pin.password())
             .unwrap_or(&[]), // TODO have config that dissallows empty pin
-                                      // TODO there seems to be a bug on empty input to argon, so need to provide a default value
-                                      // TODO put profile in here?
-        &salt.as_str().as_bytes(),
+        salt.as_str().as_bytes(),
         &mut pin_key.data_mut()
     ).map_err(|_| Error::Argon2)?;
 
     Ok(pin_key)
 }
 
-// Given the pin and the local_secret (age / keyring) encrypt the dek
-// TODO Can I get away with passing arguments by reference?
-fn wrap_dek(pin_key: LockedVec, keys: Keys) -> Result<(Vec<u8>, Nonce)> {
-    let cipher = ChaCha20Poly1305::new_from_slice(pin_key.data())
-        .map_err(|_| Error::ChaChaEncryption)?; // TODO handle error
+fn wrap_single_key(cipher: &ChaCha20Poly1305, keys: &Keys) -> Result<WrappedKeys> {
+
     let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng); // 96-bits; unique per message
 
     let ciphertext = {
@@ -103,10 +181,32 @@ fn wrap_dek(pin_key: LockedVec, keys: Keys) -> Result<(Vec<u8>, Nonce)> {
         buf.data().to_vec()
     };
 
-    Ok((ciphertext, nonce))
+    Ok(WrappedKeys::new(ciphertext, nonce))
+}
+// Given the pin and the local_secret (age / keyring) encrypt the dek
+// TODO Can I get away with passing arguments by reference?
+pub fn wrap_dek(
+    pin_key: &LockedVec,
+    keys: &Keys,
+    org_keys: &HashMap<String, Keys>
+) -> Result<(WrappedKeys, HashMap<String, WrappedKeys>)> {
+    let cipher = ChaCha20Poly1305::new_from_slice(pin_key.data())
+        .map_err(|_| Error::ChaChaEncryption)?; // TODO handle error
+
+    let keys = wrap_single_key(&cipher, &keys)?;
+
+    let wrapped_org_keys: HashMap<String, WrappedKeys> = org_keys
+        .iter()
+        .map(|(org, k)| {
+            wrap_single_key(&cipher, k).map(|wk| (org.clone(), wk))
+        })
+        .collect::<std::result::Result<_, Error>>()?;
+
+    Ok((keys, wrapped_org_keys))
 }
 
-// Need to implement the below traits for Vec in order to avoid allocating secrets
+// Need to implement the below traits
+// in order to decrypt in place (to not have to allocate secret to an insecure buffer)
 impl AsRef<[u8]> for LockedVec {
     fn as_ref(&self) -> &[u8] {
         self.data()
@@ -127,35 +227,37 @@ impl Buffer for LockedVec {
     fn truncate(&mut self, len: usize) {
         self.truncate(len)
     }
-
 }
 
-fn unwrap_dek(pin_key: LockedVec, wrapped_dek: Vec<u8>, nonce: Nonce) -> Result<Keys> {
-    let cipher = ChaCha20Poly1305::new_from_slice(pin_key.data()).unwrap(); // TODO handle error
-
+fn unwrap_single_key(cipher: &ChaCha20Poly1305, wrapped_keys: &WrappedKeys) -> Result<Keys> {
     let mut key = LockedVec::new();
-    key.extend(wrapped_dek.into_iter());
+    key.extend(wrapped_keys.bytes().to_vec().into_iter());
 
     cipher.decrypt_in_place(
-        &nonce,
+        &wrapped_keys.nonce(),
         b"",
         &mut key
     ).map_err(|_| Error::PinKekDecryption)?;
 
     Ok(Keys::new(key))
 }
+pub fn unwrap_dek(pin_key: &LockedVec, wrapped_keys: WrappedKeys, wrapped_org_keys: HashMap<String, WrappedKeys>) -> Result<(Keys, HashMap<String, Keys>)> {
+    let cipher = ChaCha20Poly1305::new_from_slice(pin_key.data()).unwrap(); // TODO handle error
 
-// fn wrap_dek() -- We don't do this in bitwarden, because the wrapped dek is in the database from bitwarden I believe...
-// So how do we keep the PIN wrapped dek around... Well we can just put it algonside the wrapped dek
-// Where is that kept ? Probably in the DB? No because that's the bitwarden database :thinking:
-    // Yes it's kept in the db, so we need to add the call to the pin for unlock_state, but that doesn't take any PIN paremeters right now
-    // So either
-        // Pass in a PinState struct with backend, protected key_file
-        // access config values? (I don't think this makes much sense)
+    let keys = unwrap_single_key(&cipher, &wrapped_keys)?;
+
+    let wrapped_org_keys: HashMap<String, Keys> = wrapped_org_keys
+        .iter()
+        .map(|(org, k)| {
+            unwrap_single_key(&cipher, k).map(|wk| (org.clone(), wk))
+        })
+        .collect::<std::result::Result<_, Error>>()?;
+
+    Ok((keys, wrapped_org_keys))
+}
 
 #[cfg(test)]
 mod tests {
-    use textwrap::wrap;
     use super::*;
 
     fn create_vec(bytes: &[u8]) -> LockedVec {
@@ -176,15 +278,25 @@ mod tests {
         let key_content = [48u8; 64];
         let dek = Keys::new(create_vec(&key_content));
 
-        let pin = create_vec(b"1234".as_ref());
-        let local_secret = create_vec("0000".as_ref());
-        let derived_kek = derive_key_from_pin(Some(pin), local_secret).unwrap();
+        let org_keys: HashMap<String, Keys> = [("test_corp".to_string(), dek.clone())].into_iter().collect();
 
-        let (wrapped_dek, nonce) = wrap_dek(derived_kek.clone(), dek).unwrap();
+        let pin = Password::new(create_vec(b"1234".as_ref()));
+        let local_secret = create_vec([b'0';32].as_ref());
+        let salt = SaltString::generate(&mut OsRng);
+        let kdf_params = Argon2Params::new();
+        let derived_kek = derive_kek_from_pin(Some(&pin), &local_secret, &salt, &kdf_params).unwrap();
 
-        let key_to_test = unwrap_dek(derived_kek, wrapped_dek, nonce).unwrap();
+        let (wrapped_dek, wrapped_org_keys) = wrap_dek(&derived_kek, &dek, &org_keys).unwrap();
+
+        let (key_to_test, org_keys_to_test) = unwrap_dek(&derived_kek, wrapped_dek, wrapped_org_keys).unwrap();
 
         let key_to_test_raw = concat_key_bytes(key_to_test.enc_key(), key_to_test.mac_key());
-        assert_eq!(key_to_test_raw.as_slice(), &key_content)
+        assert_eq!(key_to_test_raw.as_slice(), &key_content);
+
+        let key_to_test_raw2 = {
+            let key = org_keys_to_test.get("test_corp").unwrap();
+            concat_key_bytes(key.enc_key(), key.mac_key())
+        };
+        assert_eq!(key_to_test_raw2.as_slice(), &key_content)
     }
 }

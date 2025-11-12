@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+use crate::pin_age_backend::PinBackend;
+use crate::pin_crypto::unwrap_dek;
 use crate::prelude::*;
+use argon2::password_hash::SaltString;
 
 pub async fn register(
     email: &str,
@@ -75,8 +79,30 @@ pub async fn send_two_factor_email(
         .await
 }
 
-// TODO DELETE THIS NOTE
-// You don't
+#[cfg(feature = "pin")]
+pub fn unlock_with_pin(
+    pin: &crate::locked::Vec
+
+) -> anyhow::Result<(crate::locked::Keys, HashMap<String, crate::locked::Keys>)>{ // TODO sort out errors
+
+    todo!()
+    // let config = crate::config::Config::load()?; // TODO should this be passed into unlock_with_pin?
+
+    // let backend = crate::pin_age_backend::AgePinBackend; // Or choose, or pass it into the function
+
+    // let local_secret = backend.retrieve_local_secret(&config)?;
+
+    // let salt: SaltString = todo!();
+
+    // let kek = crate::pin_crypto::derive_kek_from_pin(Some(pin), &local_secret, &salt)?;
+
+    // let (wrapped_dek, nonce) = todo!();
+
+    // let master_key = crate::pin_crypto::unwrap_dek(&kek, wrapped_dek, &nonce)?;
+
+    // Ok((master_key, HashMap::new()))
+}
+
 pub fn unlock<S: std::hash::BuildHasher>(
     email: &str,
     password: &crate::locked::Password,

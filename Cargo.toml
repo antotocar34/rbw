@@ -86,13 +86,14 @@ zeroize = "1.8.1"
 arboard = { version = "3.5", default-features = false, features = [
     "wayland-data-control",
 ], optional = true }
-chacha20poly1305 = "0.10.1"
-age = {  version = "0.11.1", features = ["armor", "plugin"] }
+chacha20poly1305 = {  version = "0.10.1", optional = true }
+age = {  version = "0.11.1", features = ["armor", "plugin"], optional = true }
+serde_bytes = {version = "0.11.19", optional = true}
 
 [features]
-default = ["clipboard"]
+default = ["clipboard", "pin"] # TODO turn off by default
 clipboard = ["arboard"]
-pin = []
+pin = ["chacha20poly1305", "age", "serde_bytes"]
 
 [lints.clippy]
 cargo = { level = "warn", priority = -1 }

@@ -11,6 +11,7 @@ pub mod identity;
 pub mod json;
 pub mod locked;
 pub mod pinentry;
+pub mod pin_flow;
 mod prelude;
 pub mod protocol;
 pub mod pwgen;

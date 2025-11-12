@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use anyhow::Context as _;
 use sha2::Digest as _;
+use rbw::error;
 
 pub async fn register(
     sock: &mut crate::sock::Sock,
@@ -380,6 +382,8 @@ async fn unlock_state(
     environment: &rbw::protocol::Environment,
 ) -> anyhow::Result<()> {
     if state.lock().await.needs_unlock() {
+
+
         let db = load_db().await?;
 
         let Some(kdf) = db.kdf else {
@@ -395,9 +399,6 @@ async fn unlock_state(
         let memory = db.memory;
         let parallelism = db.parallelism;
 
-        // TODO Check for PIN (unless there is a syncing thing?)
-        // How to access config? Can I access crate::config? that seems like an anti-pattern...
-        // I'm starting to think maybe the config is the best course of action... ok yeah
         let Some(protected_key) = db.protected_key else {
             return Err(anyhow::anyhow!(
                 "failed to find protected key in db"
@@ -412,7 +413,7 @@ async fn unlock_state(
         let email = config_email().await?;
 
         let mut err_msg = None;
-        for i in 1_u8..=3 {
+        'attempts: for i in 1_u8..=3 {
             let err = if i > 1 {
                 // this unwrap is safe because we only ever continue the loop
                 // if we have set err_msg
@@ -420,7 +421,47 @@ async fn unlock_state(
             } else {
                 None
             };
-            // TODO PIN write pin flow here as well
+
+            #[cfg(feature = "pin")]
+            if rbw::pin_flow::check_if_pin_available() {
+
+                let pin = if !rbw::pin_flow::empty_pin() {
+                    let inputted_pin = rbw::pinentry::getpin(
+                        &config_pinentry().await?,
+                        "PIN",
+                        &format!(
+                            "Unlock the local database for '{}'",
+                            rbw::dirs::profile()
+                        ),
+                        err.clone().as_deref(),
+                        environment,
+                        true,
+                    )
+                    .await
+                    .context("failed to read password from pinentry")?;
+
+                    Some(inputted_pin)
+                } else { None };
+
+                let config = rbw::config::Config::load()?;
+                let (keys, org_keys) = match rbw::pin_flow::unlock_with_pin(pin.as_ref(), config) {
+                    Ok(keys) => keys,
+                    Err(error::Error::IncorrectPassword {message}) => {
+                        if i == 3 {
+                            return Err(error::Error::IncorrectPassword {message}).context("failed to unlock database")
+                        } else {
+                            err_msg = Some(message);
+                            continue 'attempts
+                        }
+                    }
+                    Err(e) => return Err(e).context("Unknown error")
+                };
+                unlock_success(state.clone(), keys, org_keys).await?;
+                return Ok(())
+            }
+
+
+
             let password = rbw::pinentry::getpin(
                 &config_pinentry().await?,
                 "Master Password",
@@ -529,6 +570,7 @@ pub async fn sync(
     } else {
         return Err(anyhow::anyhow!("failed to find refresh token in db"));
     };
+    // TODO PIN do we update the protected key?? Or maybe we just accept that with syncing the PIN doesn't apply
     let (
         access_token,
         (protected_key, protected_private_key, protected_org_keys, entries),
@@ -556,6 +598,7 @@ pub async fn sync(
     Ok(())
 }
 
+// TODO PIN this is the unlock flow
 async fn decrypt_cipher(
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
     environment: &rbw::protocol::Environment,
@@ -623,6 +666,7 @@ async fn decrypt_cipher(
 
         let mut err_msg = None;
         for i in 1_u8..=3 {
+
             let err = if i > 1 {
                 // this unwrap is safe because we only ever continue the loop
                 // if we have set err_msg

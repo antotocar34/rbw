@@ -22,6 +22,7 @@ pub struct Config {
     // backcompat, no longer generated in new configs
     #[serde(skip_serializing)]
     pub device_id: Option<String>,
+    #[cfg(feature = "pin")]
     #[serde(flatten)]
     pub pin_config: Option<crate::pin_age_backend::PinBackendConfig>
 }

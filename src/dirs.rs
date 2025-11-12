@@ -71,8 +71,15 @@ pub fn ssh_agent_socket_file() -> std::path::PathBuf {
     runtime_dir().join("ssh-agent-socket")
 }
 
-// pub fn age_identity_file() -> std::path::PathBuf { cache_dir().join("")}
-// TODO maybe we should just serialize everyything, like metadata, nonce and also age encrypted key
+#[cfg(feature = "pin")]
+pub fn pin_wrapped_local_secret_file() -> std::path::PathBuf {
+    cache_dir().join(format!("{}-pin-wrapped-key.age", &profile()))
+}
+
+#[cfg(feature = "pin")]
+pub fn pin_state_file() -> std::path::PathBuf {
+    cache_dir().join(format!("{}-pin-state.json", &profile()))
+}
 
 fn config_dir() -> std::path::PathBuf {
     let project_dirs =
