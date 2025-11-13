@@ -10,7 +10,7 @@ use anyhow::{anyhow, Context};
 use crate::locked::Vec;
 use crate::config::Config;
 use crate::dirs;
-pub(crate) use crate::pin::backend::PinBackend;
+use crate::pin::backend::PinBackend;
 
 pub const SUPPORTED_AGE_PLUGINS: [&str; 3] = [
     "yubikey", // https://github.com/str4d/age-plugin-yubikey
@@ -28,12 +28,14 @@ impl PinBackend for AgePinBackend {
     fn retrieve_local_secret(&self, config: &Config) -> anyhow::Result<Vec> {
         let age_file_path = dirs::pin_wrapped_local_secret_file();
 
-        let pin_config = config.pin_config.as_ref().ok_or(anyhow::anyhow!("Pin config not set"))?;
+        let pin_config = config.pin_config
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Pin config not set"))?;
         let identity = age_identity(pin_config)?;
 
         let identity_plugin = plugin::IdentityPluginV1::new(
-            &identity.plugin(),
-            &[identity.clone()],
+            identity.plugin(),
+            std::slice::from_ref(&identity),
             age::NoCallbacks
         ).context(format!("Could not construct age plugin identity. Is age-plugin-{} in your $PATH?", &identity.plugin()))?;
 
@@ -62,9 +64,9 @@ impl PinBackend for AgePinBackend {
         }?;
 
         let plugin_recipient = plugin::RecipientPluginV1::new(
-            &identity.plugin(),
+            identity.plugin(),
             &[],
-            &[identity.clone()],
+            std::slice::from_ref(&identity),
             age::NoCallbacks,
         )?;
 
@@ -97,24 +99,20 @@ impl PinBackend for AgePinBackend {
             .context("Failed to remove the age wrapped local secret.")?;
         Ok(())
     }
-
-    fn identifier(&self) -> String {
-        "age".to_string()
-    }
 }
 
 fn age_identity(pin_config: &crate::pin::backend::PinBackendConfig) -> anyhow::Result<plugin::Identity> {
     let age_identity = fs::read_to_string(
         pin_config.age_identity_file_path
             .as_ref()
-            .ok_or(anyhow!("Could not read the age identity file"))?
+            .ok_or_else(|| anyhow!("Could not read the age identity file"))?
     )?;
 
     // Remove '#' comments
     let cleaned_string: String = age_identity
         .lines()
         .filter(|s| !s.trim_start().starts_with('#'))
-        .map(|s| s.trim())
+        .map(str::trim)
         .collect::<std::vec::Vec<_>>()
         .join("\n");
 
@@ -126,20 +124,20 @@ fn age_identity(pin_config: &crate::pin::backend::PinBackendConfig) -> anyhow::R
 
     if SUPPORTED_AGE_PLUGINS.iter().all(|&x| x != identity.plugin()) {
         anyhow::bail!("Plugin is not supported")
-    };
+    }
 
     Ok(identity)
 }
 
 
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::config::Config;
 
     const DUMMY_IDENTITY: &str = "AGE-PLUGIN-SE-1QJPQZSP3SGQNCVYP75XQYUNTXXQ7UVQTPSPKY6TYQSZ86D7RUGCYSRQRWP6KYPZPQ338C2YRPH6W355K58YUN5TQLEG2K2RRTKG4TCN9HRJVEGFWGC5C55K8S3ZN6NH4TEK7KC9JDZDGRE83DVSLDMJR6KYD4QKE4NRWS868XQYQCQMJDDHSYQGQXQRSCQNTWSPQZPPS9CXQYAMTQS5036M7ACXRYG640MLP7KL0TDE240HK3F429FHEYMM6GXGCJNNFMNWZ0Q5EZ26AXD3NQPCVQF3XXQSPPYCQWRQZDDMQYQGZXQTSCQMTD9JQGY9HGFW0WVD4FN26Y35VCX0N9K0CXQNSCQMJDDKSGG9UQ9UDHE398787C2YY5WW8E6T8W5H3NHKTVM8TSHLAC0AA0J3CKVCYYRQZV4JRZ0PS8GXQXCTRDSCNXVQGPSPK7CMTQYQSZVQFPSZX7ER9DSQSZQFSPYXQGMMNVAHQZQGPXQRSCQN0VYQSZQFSPQXQXMMTVSQSZQGV24NPH";
-    const DUMMY_KEY: &[u8; 32] = &[b'0'; 32];
 
     fn create_temp_file_of_contents(contents: &[u8]) -> tempfile::NamedTempFile {
         let mut file = tempfile::NamedTempFile::new().unwrap();

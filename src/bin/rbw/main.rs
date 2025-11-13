@@ -523,8 +523,8 @@ fn main() {
         #[cfg(feature = "pin")]
         Opt::Pin { cmd }=> match cmd {
            rbw::pin::cli::Pin::Set { empty_pin, backend } => commands::register_pin(empty_pin, backend),
-           rbw::pin::cli::Pin::Clear { } => rbw::pin::flow::clear(),
-           rbw::pin::cli::Pin::Status { } => rbw::pin::flow::status(),
+           rbw::pin::cli::Pin::Clear => rbw::pin::flow::clear(),
+           rbw::pin::cli::Pin::Status => rbw::pin::flow::status(),
         }
     }
     .with_context(|| format!("rbw {subcommand_name}"));

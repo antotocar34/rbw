@@ -1,3 +1,4 @@
+#![cfg(feature = "pin")]
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -6,8 +7,8 @@ use anyhow::{anyhow, Context};
 use argon2::password_hash::SaltString;
 use serde::{Deserialize, Serialize};
 use crate::config::Config;
-use crate::pin::backend_age::{AgePinBackend, SUPPORTED_AGE_PLUGINS};
-use crate::pin::crypto::{Argon2Params, WrappedKeys};
+use crate::pin::backend_age::{AgePinBackend};
+use crate::pin::crypto::{Argon2Params, WrappedKey};
 
 #[derive(Serialize, Deserialize, clap::ValueEnum, Clone, Debug)]
 pub enum Backend {
@@ -19,29 +20,22 @@ pub enum Backend {
 impl PinBackend for Backend {
     fn retrieve_local_secret(&self, config: &Config) -> anyhow::Result<crate::locked::Vec> {
         match self {
-            Backend::Age => AgePinBackend.retrieve_local_secret(config),
-            Backend::OSKeyring => todo!()
+            Self::Age => AgePinBackend.retrieve_local_secret(config),
+            Self::OSKeyring => todo!()
         }
     }
 
     fn store_local_secret(&self, kek: &crate::locked::Vec, config: &Config) -> anyhow::Result<()> {
         match self {
-            Backend::Age => AgePinBackend.store_local_secret(kek, config),
-            Backend::OSKeyring => todo!()
+            Self::Age => AgePinBackend.store_local_secret(kek, config),
+            Self::OSKeyring => todo!()
         }
     }
 
     fn clear_local_secret(&self) -> anyhow::Result<()> {
         match self {
-            Backend::Age => AgePinBackend.clear_local_secret(),
-            Backend::OSKeyring => todo!()
-        }
-    }
-
-    fn identifier(&self) -> String {
-        match self {
-            Backend::Age => AgePinBackend.identifier(),
-            Backend::OSKeyring => todo!()
+            Self::Age => AgePinBackend.clear_local_secret(),
+            Self::OSKeyring => todo!()
         }
     }
 }
@@ -52,8 +46,6 @@ pub trait PinBackend {
     fn store_local_secret(&self, kek: &crate::locked::Vec, config: &Config) -> anyhow::Result<()>;
 
     fn clear_local_secret(&self) -> anyhow::Result<()>;
-
-    fn identifier(&self) -> String;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -82,8 +74,8 @@ impl PinBackendConfig {
 
 #[derive(Serialize, Deserialize)]
 pub struct PinState {
-    wrapped_keys: WrappedKeys,
-    wrapped_org_keys: HashMap<String,WrappedKeys>,
+    wrapped_keys: WrappedKey,
+    wrapped_org_keys: HashMap<String, WrappedKey>,
     salt: String,
     kdf_params: Argon2Params,
     pub empty_pin: bool,
@@ -92,8 +84,8 @@ pub struct PinState {
 
 impl PinState {
     pub fn new(
-        wrapped_keys: WrappedKeys,
-        wrapped_org_keys: HashMap<String, WrappedKeys>,
+        wrapped_keys: WrappedKey,
+        wrapped_org_keys: HashMap<String, WrappedKey>,
         salt: SaltString,
         kdf_params: Argon2Params,
         empty_pin: bool,
@@ -110,7 +102,7 @@ impl PinState {
         Ok(slf)
     }
 
-    pub fn unpack(&self) -> anyhow::Result<(WrappedKeys, HashMap<String, WrappedKeys>, SaltString, Argon2Params, bool)> {
+    pub fn unpack(&self) -> anyhow::Result<(WrappedKey, HashMap<String, WrappedKey>, SaltString, Argon2Params, bool, Backend)> {
         Ok((
             self.wrapped_keys.clone(),
             self.wrapped_org_keys.clone(),
@@ -121,7 +113,8 @@ impl PinState {
                 }
             },
             self.kdf_params.clone(),
-            self.empty_pin
+            self.empty_pin,
+            self.backend.clone()
         ))
     }
 

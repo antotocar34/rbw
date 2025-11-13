@@ -1,9 +1,4 @@
 #[cfg(feature = "pin")]
-/*
-    rbw pin clear     => rbw::pin_flow::clear_pin(...)
-    rbw pin set       => rbw::pin_flow::register(...
-    rbw pin status    => rbw::pin_flow::status(...)
-*/
 
 #[derive(Debug, clap::Parser)]
 pub enum Pin {

@@ -185,9 +185,9 @@ async fn handle_request(
 
         #[cfg(feature = "pin")]
         rbw::protocol::Action::PinRegister { empty_pin, backend }=> {
-            let ask_for_pin = !empty_pin; // TODO read from pin_state, and pass it down?
+            let ask_for_pin = !empty_pin;
             crate::actions::register_pin(sock, state.clone(), ask_for_pin, backend.clone()).await?;
-            true // TODO not sure about this
+            true
         }
     };
 

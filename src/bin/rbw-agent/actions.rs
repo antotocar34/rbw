@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _};
 use sha2::Digest as _;
 use rbw::config::Config;
 use rbw::error;
@@ -424,7 +424,9 @@ async fn unlock_state(
             #[cfg(feature = "pin")]
             if rbw::pin::flow::check_if_pin_available_async().await {
 
-                let pin = if !rbw::pin::flow::empty_pin() {
+                let pin_state = rbw::pin::backend::PinState::read_from_file(rbw::dirs::pin_state_file())
+                    .context("failed to read the pin state file")?;
+                let pin = if pin_state.empty_pin { None } else {
                     let inputted_pin = rbw::pinentry::getpin(
                         &config_pinentry().await?,
                         "PIN",
@@ -437,21 +439,20 @@ async fn unlock_state(
                         true,
                     )
                     .await
-                    .context("failed to read password from pinentry")?;
+                    .context("failed to read PIN from pinentry")?;
 
                     Some(inputted_pin)
-                } else { None };
+                };
 
-                let config = rbw::config::Config::load()?;
-                let (keys, org_keys) = match rbw::pin::flow::unlock_with_pin(pin.as_ref(), config) {
+                let config = Config::load()?;
+                let (keys, org_keys) = match rbw::pin::flow::unlock_with_pin(pin.as_ref(), pin_state, config) {
                     Ok(keys) => keys,
                     Err(error::Error::IncorrectPassword {message}) => {
                         if i == 3 {
                             return Err(error::Error::IncorrectPassword {message}).context("failed to unlock database")
-                        } else {
-                            err_msg = Some(message);
-                            continue 'attempts
                         }
+                        err_msg = Some(message);
+                        continue 'attempts
                     }
                     Err(e) => return Err(e).context("Unknown error")
                 };
