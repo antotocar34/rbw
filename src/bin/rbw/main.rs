@@ -240,7 +240,7 @@ enum Opt {
     #[command(about = "Manage local PIN unlock")]
     Pin {
         #[command(subcommand)]
-        cmd: rbw::pin_cli::Pin
+        cmd: rbw::pin::cli::Pin
     }
 }
 
@@ -522,9 +522,9 @@ fn main() {
         },
         #[cfg(feature = "pin")]
         Opt::Pin { cmd }=> match cmd {
-           rbw::pin_cli::Pin::Set { empty_pin, backend } => commands::register_pin(empty_pin, backend),
-           rbw::pin_cli::Pin::Clear { } => rbw::pin_flow::clear(&rbw::pin_backend_age::AgePinBackend),
-           rbw::pin_cli::Pin::Status { } => rbw::pin_flow::status(),
+           rbw::pin::cli::Pin::Set { empty_pin, backend } => commands::register_pin(empty_pin, backend),
+           rbw::pin::cli::Pin::Clear { } => rbw::pin::flow::clear(),
+           rbw::pin::cli::Pin::Status { } => rbw::pin::flow::status(),
         }
     }
     .with_context(|| format!("rbw {subcommand_name}"));

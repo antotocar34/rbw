@@ -2,7 +2,6 @@
 use std::fs;
 use std::io::{BufReader, Read, Write};
 
-use std::path::PathBuf;
 use std::fs::File;
 use std::os::unix::fs::OpenOptionsExt;
 use serde::{Deserialize, Serialize};
@@ -11,7 +10,7 @@ use anyhow::{anyhow, Context};
 use crate::locked::Vec;
 use crate::config::Config;
 use crate::dirs;
-pub(crate) use crate::pin_backend::PinBackend;
+pub(crate) use crate::pin::backend::PinBackend;
 
 pub const SUPPORTED_AGE_PLUGINS: [&str; 3] = [
     "yubikey", // https://github.com/str4d/age-plugin-yubikey
@@ -48,7 +47,7 @@ impl PinBackend for AgePinBackend {
                 .context("Failed to decrypt age wrapped local secret")?;
 
         let mut kek = Vec::new();
-        kek.extend(std::iter::repeat_n(0, crate::pin_crypto::KEK_LEN));
+        kek.extend(std::iter::repeat_n(0, crate::pin::crypto::KEK_LEN));
 
         decrypted_reader.read_exact(kek.data_mut())?;
 
@@ -104,7 +103,7 @@ impl PinBackend for AgePinBackend {
     }
 }
 
-fn age_identity(pin_config: &crate::pin_backend::PinBackendConfig) -> anyhow::Result<plugin::Identity> {
+fn age_identity(pin_config: &crate::pin::backend::PinBackendConfig) -> anyhow::Result<plugin::Identity> {
     let age_identity = fs::read_to_string(
         pin_config.age_identity_file_path
             .as_ref()
@@ -166,11 +165,11 @@ mod tests {
     fn pin_age_parse_identity_file() {
         let identity_file = create_temp_file_of_contents(DUMMY_IDENTITY.as_bytes());
 
-        let pin_config = crate::pin_backend::PinBackendConfig {
+        let pin_config = crate::pin::backend::PinBackendConfig {
             enable_pin: true,
             local_secret_keyring_entry_name: None,
             age_identity_file_path: Some(identity_file.path().into()),
-            kdf_params: Some(crate::pin_crypto::Argon2Params::new())
+            kdf_params: Some(crate::pin::crypto::Argon2Params::new())
         };
 
         match age_identity(&pin_config) {
@@ -195,11 +194,11 @@ mod tests {
             client_cert_path: None,
             device_id: None,
             pin_config: Some(
-                crate::pin_backend::PinBackendConfig {
+                crate::pin::backend::PinBackendConfig {
                     enable_pin: true,
                     local_secret_keyring_entry_name: None,
                     age_identity_file_path: Some(identity_file.path().into()),
-                    kdf_params: Some(crate::pin_crypto::Argon2Params::new())
+                    kdf_params: Some(crate::pin::crypto::Argon2Params::new())
                 }
             )
         };

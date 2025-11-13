@@ -1,8 +1,4 @@
-use std::collections::HashMap;
-use crate::pin_backend_age::PinBackend;
-use crate::pin_crypto::unwrap_dek;
 use crate::prelude::*;
-use argon2::password_hash::SaltString;
 
 pub async fn register(
     email: &str,

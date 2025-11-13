@@ -8,11 +8,11 @@ use anyhow::{Context};
 use argon2::password_hash::SaltString;
 use rand::{RngCore};
 use rand::rngs::{OsRng};
-use crate::{dirs, error, pin_crypto};
-use crate::pin_crypto::{Argon2Params};
+use crate::{pin, dirs, error};
+use crate::pin::crypto::{Argon2Params};
 use crate::config::Config;
 use crate::locked::{Vec, Keys, Password};
-use crate::pin_backend::{PinBackend, Backend, PinState};
+use crate::pin::backend::{PinBackend, Backend, PinState};
 
 // TODO think about whether this needs to be an async function
 // I think I do need this
@@ -70,20 +70,21 @@ pub fn unlock_with_pin(pin: Option<&Password>, config: Config) -> error::Result<
     ) = state.unpack()
         .map_err(|_| error::Error::IncorrectPassword {message: "Couldn't deserialize pin state".into()})?;
 
-    let backend = crate::pin_backend_age::AgePinBackend; // TODO for now this is fixed
-                                                         // But I want to implement OS keyring
+    let backend = crate::pin::backend_age::AgePinBackend; // TODO for now this is fixed
+    // But I want to implement OS keyring
 
     let local_secret = backend.retrieve_local_secret(&config)
         .map_err(|_| error::Error::IncorrectPassword {message: "Couldn't retrieve local secret".into()})?;
 
-    let kek = pin_crypto::derive_kek_from_pin(pin, &local_secret, &salt, &kdf_params)
+    let kek = pin::crypto::derive_kek_from_pin(pin, &local_secret, &salt, &kdf_params)
         .map_err(|_| error::Error::IncorrectPassword {message: "Couldn't retrieve local secret".into()})?;
 
-    let (keys, org_keys) = pin_crypto::unwrap_dek(&kek, wrapped_key, wrapped_org_keys)
+    let (keys, org_keys) = pin::crypto::unwrap_dek(&kek, wrapped_key, wrapped_org_keys)
         .map_err(|_| error::Error::IncorrectPassword {message: "PIN is not correct".into()})?;
 
     Ok((keys, org_keys))
 }
+
 
 // TODO evaluate whether it is worth it to make this async
 pub fn register(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Password>, config: &Config, backend: Backend) -> anyhow::Result<()> {
@@ -92,16 +93,17 @@ pub fn register(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Pass
 
     backend.store_local_secret(&local_secret, &config)?;
 
+    let default_kdf_params = Argon2Params::new();
     let kdf_params = if let Some(pin_config) = config.pin_config.as_ref() {
-        &pin_config.kdf_params.clone().unwrap_or(Argon2Params::new())
+        &pin_config.kdf_params.clone().unwrap_or(default_kdf_params)
     } else {
-        &Argon2Params::new()
+        &default_kdf_params
     };
 
     let salt = SaltString::generate(&mut OsRng);
-    let kek = pin_crypto::derive_kek_from_pin(pin, &local_secret, &salt, &kdf_params)?;
+    let kek = pin::crypto::derive_kek_from_pin(pin, &local_secret, &salt, &kdf_params)?;
 
-    let (wrapped_keys, wrapped_org_keys) = pin_crypto::wrap_dek(&kek, &keys, &org_keys)?;
+    let (wrapped_keys, wrapped_org_keys) = pin::crypto::wrap_dek(&kek, &keys, &org_keys)?;
 
     let state_to_save = PinState::new(
         wrapped_keys,
@@ -117,8 +119,11 @@ pub fn register(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Pass
     Ok(())
 }
 
-pub fn clear(backend: &impl PinBackend) -> anyhow::Result<()> {
+pub fn clear() -> anyhow::Result<()> {
 
+    let backend = crate::pin::backend::PinState::read_from_file(
+        dirs::pin_state_file()
+    ).map(|pc| pc.backend)?;
     backend.clear_local_secret()?;
     let pin_state_file = dirs::pin_state_file();
     if std::fs::exists(pin_state_file).is_ok() {

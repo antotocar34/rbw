@@ -421,12 +421,10 @@ async fn unlock_state(
                 None
             };
 
-            let _out: bool = rbw::pin_flow::check_if_pin_available();
-            let _out2: bool = rbw::pin_flow::check_if_pin_available_async().await;
             #[cfg(feature = "pin")]
-            if rbw::pin_flow::check_if_pin_available_async().await {
+            if rbw::pin::flow::check_if_pin_available_async().await {
 
-                let pin = if !rbw::pin_flow::empty_pin() {
+                let pin = if !rbw::pin::flow::empty_pin() {
                     let inputted_pin = rbw::pinentry::getpin(
                         &config_pinentry().await?,
                         "PIN",
@@ -445,7 +443,7 @@ async fn unlock_state(
                 } else { None };
 
                 let config = rbw::config::Config::load()?;
-                let (keys, org_keys) = match rbw::pin_flow::unlock_with_pin(pin.as_ref(), config) {
+                let (keys, org_keys) = match rbw::pin::flow::unlock_with_pin(pin.as_ref(), config) {
                     Ok(keys) => keys,
                     Err(error::Error::IncorrectPassword {message}) => {
                         if i == 3 {
@@ -1010,7 +1008,7 @@ pub async fn register_pin(
     sock: &mut crate::sock::Sock,
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
     ask_for_pin: bool,
-    backend: rbw::pin_backend::Backend
+    backend: rbw::pin::backend::Backend
 ) -> anyhow::Result<()> {
 
     let environment = {
@@ -1051,7 +1049,7 @@ pub async fn register_pin(
         let org_keys_owned: HashMap<String, rbw::locked::Keys> =
             s.org_keys.clone().unwrap_or_default();
 
-        rbw::pin_flow::register(
+        rbw::pin::flow::register(
             keys,
             &org_keys_owned,
             chosen_pin.as_ref(),

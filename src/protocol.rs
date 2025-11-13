@@ -186,7 +186,7 @@ pub enum Action {
     #[cfg(feature = "pin")]
     PinRegister {
         empty_pin: bool,
-        backend: crate::pin_backend::Backend
+        backend: crate::pin::backend::Backend
     }
 }
 

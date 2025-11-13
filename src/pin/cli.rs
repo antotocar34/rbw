@@ -20,7 +20,7 @@ pub enum Pin {
         /// The age backend with the plugins `yubikey, se`
         empty_pin: bool,
         #[arg(long, value_enum, help = "Backend to store local_secret")] // TODO this NEEDS to be an enum value
-        backend: crate::pin_backend::Backend,
+        backend: crate::pin::backend::Backend,
     },
     #[command(about = "Clear the PIN")]
     Clear,

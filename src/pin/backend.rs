@@ -6,8 +6,8 @@ use anyhow::{anyhow, Context};
 use argon2::password_hash::SaltString;
 use serde::{Deserialize, Serialize};
 use crate::config::Config;
-use crate::pin_backend_age::{AgePinBackend, SUPPORTED_AGE_PLUGINS};
-use crate::pin_crypto::{Argon2Params, WrappedKeys};
+use crate::pin::backend_age::{AgePinBackend, SUPPORTED_AGE_PLUGINS};
+use crate::pin::crypto::{Argon2Params, WrappedKeys};
 
 #[derive(Serialize, Deserialize, clap::ValueEnum, Clone, Debug)]
 pub enum Backend {
@@ -87,7 +87,7 @@ pub struct PinState {
     salt: String,
     kdf_params: Argon2Params,
     pub empty_pin: bool,
-    pub backend: crate::pin_backend::Backend
+    pub backend: crate::pin::backend::Backend
 }
 
 impl PinState {

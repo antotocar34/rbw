@@ -17,7 +17,7 @@ pub fn unlock() -> anyhow::Result<()> {
 #[cfg(feature = "pin")]
 pub fn register_pin(
     empty_pin: bool,
-    backend: rbw::pin_backend::Backend
+    backend: rbw::pin::backend::Backend
 ) -> anyhow::Result<()> {
     simple_action(rbw::protocol::Action::PinRegister { empty_pin, backend})
 }

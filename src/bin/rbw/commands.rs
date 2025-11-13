@@ -1050,7 +1050,7 @@ pub fn unlock() -> anyhow::Result<()> {
 #[cfg(feature = "pin")]
 pub fn register_pin(
     empty_pin: bool,
-    backend: rbw::pin_backend::Backend
+    backend: rbw::pin::backend::Backend
 ) -> anyhow::Result<()> {
     ensure_agent()?;
     crate::actions::register_pin(empty_pin, backend)?;

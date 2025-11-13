@@ -24,7 +24,7 @@ pub struct Config {
     pub device_id: Option<String>,
     #[cfg(feature = "pin")]
     #[serde(flatten)]
-    pub pin_config: Option<crate::pin_backend::PinBackendConfig>
+    pub pin_config: Option<crate::pin::backend::PinBackendConfig>
 }
 
 impl Default for Config {
@@ -42,7 +42,7 @@ impl Default for Config {
             client_cert_path: None,
             device_id: None,
             #[cfg(feature = "pin")]
-            pin_config: Some(crate::pin_backend::PinBackendConfig::new())
+            pin_config: Some(crate::pin::backend::PinBackendConfig::new())
         }
     }
 }
