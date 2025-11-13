@@ -8,13 +8,20 @@
 #[derive(Debug, clap::Parser)]
 pub enum Pin {
     #[command(about = "Set up the PIN for local unlock")]
-    Set,
-    // {
-    //     #[arg(help = "Backend to store local_secret")]
-    //     backend: String,
-    //     #[arg(help = "Whether to have an empty pin. Only recommended for a device bound key with user input (e.g hardware key, mac touchid)")]
-    //     // empty: bool
-    // },
+    Set {
+        #[arg(
+            long,
+            default_value_t = false,
+            // help = "Whether to have an empty pin. Only recommended for a device bound local secret with user input (e.g hardware key, mac touchid)"
+        )]
+        /// Whether to allow using an empty pin.
+        ///
+        /// Only recommended for a device and user input bound local secret (e.g yubikey, mac touchid)
+        /// The age backend with the plugins `yubikey, se`
+        empty_pin: bool,
+        #[arg(long, value_enum, help = "Backend to store local_secret")] // TODO this NEEDS to be an enum value
+        backend: crate::pin_backend::Backend,
+    },
     #[command(about = "Clear the PIN")]
     Clear,
 

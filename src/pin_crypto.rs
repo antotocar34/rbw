@@ -105,7 +105,7 @@ pub fn derive_kek_from_pin(
         &argon2_config,
         pin.as_ref()
             .map(|pin| pin.password())
-            .unwrap_or(&[]), // TODO have config that dissallows empty pin
+            .unwrap_or(&[]),
         salt.as_str().as_bytes(),
         &mut pin_key.data_mut()
     ).map_err(|_| Error::Argon2)?;
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn pin_encrypt_decrypt() {
-        let key_content = [48u8; 64];
+        let key_content = [b'0'; 64];
         let dek = Keys::new(create_vec(&key_content));
 
         let org_keys: HashMap<String, Keys> = [("test_corp".to_string(), dek.clone())].into_iter().collect();

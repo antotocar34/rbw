@@ -12,7 +12,7 @@ use crate::{dirs, error, pin_crypto};
 use crate::pin_crypto::{Argon2Params};
 use crate::config::Config;
 use crate::locked::{Vec, Keys, Password};
-use crate::pin_backend::{PinBackend, SupportedBackends, PinState};
+use crate::pin_backend::{PinBackend, Backend, PinState};
 
 // TODO think about whether this needs to be an async function
 // I think I do need this
@@ -28,7 +28,6 @@ pub async fn check_if_pin_available_async() -> bool {
     a && b
 }
 
-// TODO this function does not work
 pub fn check_if_pin_available() -> bool {
     let state_file = dirs::pin_state_file();
     let wrapped_ls_file = dirs::pin_wrapped_local_secret_file();
@@ -37,6 +36,7 @@ pub fn check_if_pin_available() -> bool {
 }
 
 // TODO if pin state file doesn't parse properly surface that
+// TODO validate pin config
 pub fn status() -> anyhow::Result<()> {
    let state_exists =
        std::fs::exists(dirs::pin_state_file()).is_ok_and(|b| b) &&
@@ -86,7 +86,7 @@ pub fn unlock_with_pin(pin: Option<&Password>, config: Config) -> error::Result<
 }
 
 // TODO evaluate whether it is worth it to make this async
-pub fn register(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Password>, config: &Config, backend: &impl PinBackend) -> anyhow::Result<()> {
+pub fn register(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Password>, config: &Config, backend: Backend) -> anyhow::Result<()> {
 
     let local_secret = generate_local_secret();
 
@@ -109,7 +109,7 @@ pub fn register(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Pass
         salt,
         kdf_params.clone(),
         pin.is_none(),
-        backend.identifier()
+        backend
     )?;
 
     state_to_save.write_to_file()?;
@@ -141,17 +141,10 @@ fn generate_local_secret() -> Vec {
     buf
 }
 
-fn get_backend() -> anyhow::Result<impl PinBackend> {
+fn get_backend() -> anyhow::Result<Backend> {
     let pin_state = PinState::read_from_file(dirs::pin_state_file())?;
 
-    let backend = SupportedBackends::from_str(pin_state.backend_identifier.as_ref())?;
-
-    match backend {
-        SupportedBackends::Age(b) => Ok(b),
-        _ => anyhow::bail!("Could not read backend type")
-        // SupportedBackends::(b) => Ok(b)
-    }
-
+    Ok(pin_state.backend)
 }
 
 #[cfg(test)]

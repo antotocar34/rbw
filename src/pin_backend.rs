@@ -9,28 +9,43 @@ use crate::config::Config;
 use crate::pin_backend_age::{AgePinBackend, SUPPORTED_AGE_PLUGINS};
 use crate::pin_crypto::{Argon2Params, WrappedKeys};
 
-#[derive(Serialize, Deserialize)]
-pub enum SupportedBackends {
-    Age(AgePinBackend),
+#[derive(Serialize, Deserialize, clap::ValueEnum, Clone, Debug)]
+pub enum Backend {
+    Age,
+    OSKeyring
     // Keyring(OsKeyringPinBackend)
 }
 
-impl SupportedBackends {
-    pub fn identifier(&self) -> &'static str {
+impl PinBackend for Backend {
+    fn retrieve_local_secret(&self, config: &Config) -> anyhow::Result<crate::locked::Vec> {
         match self {
-            SupportedBackends::Age(_) => "age"
-            // SupportedBackends::OsKeyringPinBackend(_) => "keyring"
+            Backend::Age => AgePinBackend.retrieve_local_secret(config),
+            Backend::OSKeyring => todo!()
         }
     }
 
-    pub fn from_str(identifier: &str) -> anyhow::Result<Self> {
-        match identifier {
-            "age" => Ok(SupportedBackends::Age(AgePinBackend)),
-            // "keyring" => SupportedBackends::OsKeyring(_)
-            _ => anyhow::bail!("Pin state corrupted: don't recognize pin backend")
+    fn store_local_secret(&self, kek: &crate::locked::Vec, config: &Config) -> anyhow::Result<()> {
+        match self {
+            Backend::Age => AgePinBackend.store_local_secret(kek, config),
+            Backend::OSKeyring => todo!()
+        }
+    }
+
+    fn clear_local_secret(&self) -> anyhow::Result<()> {
+        match self {
+            Backend::Age => AgePinBackend.clear_local_secret(),
+            Backend::OSKeyring => todo!()
+        }
+    }
+
+    fn identifier(&self) -> String {
+        match self {
+            Backend::Age => AgePinBackend.identifier(),
+            Backend::OSKeyring => todo!()
         }
     }
 }
+
 pub trait PinBackend {
     fn retrieve_local_secret(&self, config: &Config) -> anyhow::Result<crate::locked::Vec>;
 
@@ -72,7 +87,7 @@ pub struct PinState {
     salt: String,
     kdf_params: Argon2Params,
     pub empty_pin: bool,
-    pub backend_identifier: String
+    pub backend: crate::pin_backend::Backend
 }
 
 impl PinState {
@@ -82,7 +97,7 @@ impl PinState {
         salt: SaltString,
         kdf_params: Argon2Params,
         empty_pin: bool,
-        backend_identifier: String
+        backend: Backend
     ) -> anyhow::Result<Self> {
         let slf = Self {
             wrapped_keys,
@@ -90,7 +105,7 @@ impl PinState {
             salt: salt.to_string(),
             kdf_params,
             empty_pin,
-            backend_identifier
+            backend
         };
         Ok(slf)
     }

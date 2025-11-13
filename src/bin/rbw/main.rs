@@ -522,7 +522,7 @@ fn main() {
         },
         #[cfg(feature = "pin")]
         Opt::Pin { cmd }=> match cmd {
-           rbw::pin_cli::Pin::Set /*{ backend, empty }*/ => commands::register_pin(), // TODO alter the set request to include backend
+           rbw::pin_cli::Pin::Set { empty_pin, backend } => commands::register_pin(empty_pin, backend),
            rbw::pin_cli::Pin::Clear { } => rbw::pin_flow::clear(&rbw::pin_backend_age::AgePinBackend),
            rbw::pin_cli::Pin::Status { } => rbw::pin_flow::status(),
         }

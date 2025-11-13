@@ -3,7 +3,6 @@ use anyhow::{anyhow, Context as _};
 use sha2::Digest as _;
 use rbw::config::Config;
 use rbw::error;
-use rbw::locked::Password;
 
 pub async fn register(
     sock: &mut crate::sock::Sock,
@@ -1011,6 +1010,7 @@ pub async fn register_pin(
     sock: &mut crate::sock::Sock,
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
     ask_for_pin: bool,
+    backend: rbw::pin_backend::Backend
 ) -> anyhow::Result<()> {
 
     let environment = {
@@ -1056,7 +1056,7 @@ pub async fn register_pin(
             &org_keys_owned,
             chosen_pin.as_ref(),
             &config,
-            &rbw::pin_backend_age::AgePinBackend,
+            backend,
         )?;
     }
 
