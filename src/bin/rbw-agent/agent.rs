@@ -182,6 +182,13 @@ async fn handle_request(
             crate::actions::version(sock).await?;
             false
         }
+
+        #[cfg(feature = "pin")]
+        rbw::protocol::Action::PinRegister => {
+            let ask_for_pin = true; // TODO read from pin_state, and pass it down?
+            crate::actions::register_pin(sock, state.clone(), ask_for_pin).await?;
+            true // TODO not sure about this
+        }
     };
 
     let mut state = state.lock().await;

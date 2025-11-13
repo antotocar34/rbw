@@ -73,7 +73,7 @@ pub fn ssh_agent_socket_file() -> std::path::PathBuf {
 
 #[cfg(feature = "pin")]
 pub fn pin_wrapped_local_secret_file() -> std::path::PathBuf {
-    cache_dir().join(format!("{}-pin-wrapped-key.age", &profile()))
+    cache_dir().join(format!("{}-pin-wrapped-local-secret.age", &profile()))
 }
 
 #[cfg(feature = "pin")]

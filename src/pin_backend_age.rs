@@ -7,59 +7,21 @@ use std::fs::File;
 use std::os::unix::fs::OpenOptionsExt;
 use serde::{Deserialize, Serialize};
 use age::{plugin, Decryptor};
+use anyhow::{anyhow, Context};
 use crate::locked::Vec;
 use crate::config::Config;
 use crate::dirs;
+pub(crate) use crate::pin_backend::PinBackend;
 
-pub const SUPPORTED_PLUGINS: [&str; 3] = [
+pub const SUPPORTED_AGE_PLUGINS: [&str; 3] = [
     "yubikey", // https://github.com/str4d/age-plugin-yubikey
     "tpm",     // https://github.com/Foxboron/age-plugin-tpm
     "se"       // https://github.com/remko/age-plugin-se
 ];
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PinBackendConfig {
-    pub identity_file_path: PathBuf,
-    pub kdf_params: crate::pin_crypto::Argon2Params
-    // TODO consider the following
-    // Backend Type: Age, OS
-    // Enable: Whether the feature is active at all...
-    // Active: Whether the PIN is locked and loaded // This is not a backend config
-    // KDF Params
-}
-
-impl PinBackendConfig {
-    fn identity(&self) -> anyhow::Result<plugin::Identity> {
-        let age_identity = fs::read_to_string(&self.identity_file_path)?;
-
-        // Remove hashed comments
-        let cleaned_string: String = age_identity
-            .lines()
-            .filter(|s| !s.trim_start().starts_with('#'))
-            .map(|s| s.trim())
-            .collect::<std::vec::Vec<_>>()
-            .join("\n");
-
-        let identity =
-            cleaned_string.as_str().parse::<plugin::Identity>().map_err(|e| anyhow::anyhow!(e))?;
 
 
-        if SUPPORTED_PLUGINS.iter().all(|&x| x != identity.plugin()) {
-            anyhow::bail!("Plugin is not supported")
-        };
-
-        Ok(identity)
-    }
-}
-
-pub trait PinBackend {
-    fn retrieve_local_secret(&self, config: &Config) -> anyhow::Result<Vec>;
-
-    fn store_local_secret(&self, kek: &Vec, config: &Config) -> anyhow::Result<()>;
-
-    fn clear_local_secret(&self) -> anyhow::Result<()>;
-}
-
+#[derive(Serialize, Deserialize)]
 pub struct AgePinBackend; // TODO figure out what to do here
 
 
@@ -68,23 +30,25 @@ impl PinBackend for AgePinBackend {
         let age_file_path = dirs::pin_wrapped_local_secret_file();
 
         let pin_config = config.pin_config.as_ref().ok_or(anyhow::anyhow!("Pin config not set"))?;
-        let identity = pin_config.identity()?;
+        let identity = age_identity(pin_config)?;
 
         let identity_plugin = plugin::IdentityPluginV1::new(
             &identity.plugin(),
             &[identity.clone()],
             age::NoCallbacks
-        )?;
+        ).context(format!("Could not construct age plugin identity. Is age-plugin-{} in your $PATH?", &identity.plugin()))?;
 
         let reader = BufReader::new(
             File::open(age_file_path)?
         );
         let decryptor = Decryptor::new(reader)?;
 
-        let mut decrypted_reader = decryptor.decrypt(std::iter::once(&identity_plugin as &dyn age::Identity))?;
+        let mut decrypted_reader =
+            decryptor.decrypt(std::iter::once(&identity_plugin as &dyn age::Identity))
+                .context("Failed to decrypt age wrapped local secret")?;
 
         let mut kek = Vec::new();
-        kek.extend(std::iter::repeat_n(0, 32));
+        kek.extend(std::iter::repeat_n(0, crate::pin_crypto::KEK_LEN));
 
         decrypted_reader.read_exact(kek.data_mut())?;
 
@@ -94,8 +58,8 @@ impl PinBackend for AgePinBackend {
     fn store_local_secret(&self, local_secret: &Vec, config: &Config) -> anyhow::Result<()> {
 
         let identity = match config.pin_config.as_ref() {
-            Some(pin_config) => pin_config.identity(),
-            None => anyhow::bail!("Pin config not set")
+            Some(pin_config) => age_identity(pin_config),
+            None => anyhow::bail!("Age identity not found.")
         }?;
 
         let plugin_recipient = plugin::RecipientPluginV1::new(
@@ -130,10 +94,44 @@ impl PinBackend for AgePinBackend {
     }
 
     fn clear_local_secret(&self) -> anyhow::Result<()> {
-        fs::remove_file(crate::dirs::pin_wrapped_local_secret_file())?;
+        fs::remove_file(dirs::pin_wrapped_local_secret_file())
+            .context("Failed to remove the age wrapped local secret.")?;
         Ok(())
     }
+
+    fn identifier(&self) -> String {
+        "age".to_string()
+    }
 }
+
+fn age_identity(pin_config: &crate::pin_backend::PinBackendConfig) -> anyhow::Result<plugin::Identity> {
+    let age_identity = fs::read_to_string(
+        pin_config.age_identity_file_path
+            .as_ref()
+            .ok_or(anyhow!("Could not read the age identity file"))?
+    )?;
+
+    // Remove '#' comments
+    let cleaned_string: String = age_identity
+        .lines()
+        .filter(|s| !s.trim_start().starts_with('#'))
+        .map(|s| s.trim())
+        .collect::<std::vec::Vec<_>>()
+        .join("\n");
+
+    let identity = cleaned_string
+        .as_str()
+        .parse::<plugin::Identity>()
+        .map_err(|e| anyhow::anyhow!("Could not the parse age-plugin-* identity: {}", e))?;
+
+
+    if SUPPORTED_AGE_PLUGINS.iter().all(|&x| x != identity.plugin()) {
+        anyhow::bail!("Plugin is not supported")
+    };
+
+    Ok(identity)
+}
+
 
 
 mod tests {
@@ -168,19 +166,21 @@ mod tests {
     fn pin_age_parse_identity_file() {
         let identity_file = create_temp_file_of_contents(DUMMY_IDENTITY.as_bytes());
 
-        let pin_config = PinBackendConfig {
-            identity_file_path: identity_file.path().into(),
-            kdf_params: crate::pin_crypto::Argon2Params::new()
+        let pin_config = crate::pin_backend::PinBackendConfig {
+            enable_pin: true,
+            local_secret_keyring_entry_name: None,
+            age_identity_file_path: Some(identity_file.path().into()),
+            kdf_params: Some(crate::pin_crypto::Argon2Params::new())
         };
 
-        match pin_config.identity() {
+        match age_identity(&pin_config) {
             Ok(_) => (),
             Err(_) => assert!(false)
         }
     }
 
     #[test]
-    fn pin_age_plugin_encrypt_decrypt() {
+    fn pin_age_plugin_store_retrieve() {
         let identity_file = create_temp_file_of_contents(DUMMY_IDENTITY.as_bytes());
         let config = Config {
             email: None,
@@ -195,9 +195,11 @@ mod tests {
             client_cert_path: None,
             device_id: None,
             pin_config: Some(
-                PinBackendConfig {
-                    identity_file_path: identity_file.path().into(),
-                    kdf_params: crate::pin_crypto::Argon2Params::new()
+                crate::pin_backend::PinBackendConfig {
+                    enable_pin: true,
+                    local_secret_keyring_entry_name: None,
+                    age_identity_file_path: Some(identity_file.path().into()),
+                    kdf_params: Some(crate::pin_crypto::Argon2Params::new())
                 }
             )
         };

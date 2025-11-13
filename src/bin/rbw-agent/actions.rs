@@ -1,7 +1,9 @@
 use std::collections::HashMap;
-use anyhow::Context as _;
+use anyhow::{anyhow, Context as _};
 use sha2::Digest as _;
+use rbw::config::Config;
 use rbw::error;
+use rbw::locked::Password;
 
 pub async fn register(
     sock: &mut crate::sock::Sock,
@@ -375,8 +377,6 @@ async fn login_success(
     Ok(())
 }
 
-// PIN
-// Do I need to branch here?
 async fn unlock_state(
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
     environment: &rbw::protocol::Environment,
@@ -422,8 +422,10 @@ async fn unlock_state(
                 None
             };
 
+            let _out: bool = rbw::pin_flow::check_if_pin_available();
+            let _out2: bool = rbw::pin_flow::check_if_pin_available_async().await;
             #[cfg(feature = "pin")]
-            if rbw::pin_flow::check_if_pin_available() {
+            if rbw::pin_flow::check_if_pin_available_async().await {
 
                 let pin = if !rbw::pin_flow::empty_pin() {
                     let inputted_pin = rbw::pinentry::getpin(
@@ -1001,4 +1003,63 @@ pub async fn find_ssh_private_key(
     }
 
     Err(anyhow::anyhow!("No matching private key found"))
+}
+
+
+#[cfg(feature = "pin")]
+pub async fn register_pin(
+    sock: &mut crate::sock::Sock,
+    state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
+    ask_for_pin: bool,
+) -> anyhow::Result<()> {
+
+    let environment = {
+        let s = state.lock().await;
+        s.set_timeout();
+        s.last_environment().clone()
+    };
+
+    unlock_state(state.clone(), &environment).await?;
+
+    let chosen_pin = if ask_for_pin {
+        Some(
+            rbw::pinentry::getpin(
+                &config_pinentry().await?,
+                "Set PIN",
+                "Please choose your pin",
+                None,
+                &environment,
+                true,
+            )
+                .await
+                .context("failed to read PIN from pinentry")?,
+        )
+    } else {
+        None
+    };
+
+    let config = Config::load_async().await?;
+
+    {
+        let s = state.lock().await;
+
+        let keys = s
+            .priv_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("must be logged in to register a PIN"))?;
+
+        let org_keys_owned: HashMap<String, rbw::locked::Keys> =
+            s.org_keys.clone().unwrap_or_default();
+
+        rbw::pin_flow::register(
+            keys,
+            &org_keys_owned,
+            chosen_pin.as_ref(),
+            &config,
+            &rbw::pin_backend_age::AgePinBackend,
+        )?;
+    }
+
+    respond_ack(sock).await?;
+    Ok(())
 }

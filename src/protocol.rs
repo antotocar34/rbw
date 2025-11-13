@@ -183,6 +183,8 @@ pub enum Action {
     },
     Quit,
     Version,
+    #[cfg(feature = "pin")]
+    PinRegister
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]

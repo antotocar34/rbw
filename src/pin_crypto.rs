@@ -15,7 +15,7 @@ use argon2::{
 };
 use std::os::unix::fs::{OpenOptionsExt};
 use std::path::PathBuf;
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use crate::locked::{Vec as LockedVec, Keys, Password};
 use crate::error::{ Result, Error };
 
@@ -28,13 +28,13 @@ use chacha20poly1305::{
 };
 use serde::{Serialize, Deserialize};
 
-const KEK_LEN: usize = 32;
+pub const KEK_LEN: usize = 32;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct WrappedKeys {
-    #[serde(with = "serde_bytes")]
+    #[serde(with = "base64")]
     wrapped_keys: Vec<u8>,
-    #[serde(with = "serde_bytes")]
+    #[serde(with = "base64")]
     nonce: [u8; 12]
 }
 
@@ -53,66 +53,14 @@ impl WrappedKeys {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct PinState {
-    wrapped_keys: WrappedKeys,
-    wrapped_org_keys: HashMap<String,WrappedKeys>,
-    salt: String,
-    kdf_params: Argon2Params,
-    empty_pin: bool
-}
-
-impl PinState {
-    pub fn new(wrapped_keys: WrappedKeys, wrapped_org_keys: HashMap<String, WrappedKeys>, salt: SaltString, kdf_params: Argon2Params, empty_pin: bool) -> anyhow::Result<Self> {
-        let slf = Self {
-            wrapped_keys,
-            wrapped_org_keys,
-            salt: salt.to_string(),
-            kdf_params,
-            empty_pin
-        };
-        Ok(slf)
-    }
-
-    pub fn unpack(&self) -> anyhow::Result<(WrappedKeys, HashMap<String, WrappedKeys>, SaltString, Argon2Params, bool)> {
-        Ok((
-            self.wrapped_keys.clone(),
-            self.wrapped_org_keys.clone(),
-            {
-                match SaltString::from_b64(self.salt.as_str()) {
-                    Ok(salt) => salt,
-                    Err(e) => anyhow::bail!("Error deserializing salt: {}", e)
-                }
-            },
-            self.kdf_params.clone(),
-            self.empty_pin
-        ))
-    }
-
-    pub fn read_from_file(path: PathBuf) -> anyhow::Result<Self> {
-        let file = std::fs::File::open(path)?;
-        let reader = std::io::BufReader::new(file);
-        serde_json::from_reader(reader).map_err(|e| anyhow!(e))
-    }
-
-    pub fn write_to_file(&self) -> anyhow::Result<()> {
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .mode(0o600)
-            .write(true)
-            .truncate(true)
-            .open(crate::dirs::pin_state_file())?;
-
-        let mut writer = std::io::BufWriter::new(file);
-        serde_json::to_writer(&mut writer, self)?;
-        Ok(())
-    }
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Argon2Params {
+    #[serde(rename="argon2_memory")]
     memory: u32,
+    #[serde(rename="argon2_iterations")]
     iterations: u32,
+    #[serde(rename="argon2_parallelism")]
     parallelism: u32
 }
 
@@ -134,7 +82,6 @@ impl Argon2Params {
     }
 }
 
-// TODO change pin to password type?
 pub fn derive_kek_from_pin(
     pin: Option<&Password>,
     local_secret: &LockedVec,
@@ -184,7 +131,6 @@ fn wrap_single_key(cipher: &ChaCha20Poly1305, keys: &Keys) -> Result<WrappedKeys
     Ok(WrappedKeys::new(ciphertext, nonce))
 }
 // Given the pin and the local_secret (age / keyring) encrypt the dek
-// TODO Can I get away with passing arguments by reference?
 pub fn wrap_dek(
     pin_key: &LockedVec,
     keys: &Keys,
@@ -193,7 +139,7 @@ pub fn wrap_dek(
     let cipher = ChaCha20Poly1305::new_from_slice(pin_key.data())
         .map_err(|_| Error::ChaChaEncryption)?; // TODO handle error
 
-    let keys = wrap_single_key(&cipher, &keys)?;
+    let wrapped_keys = wrap_single_key(&cipher, &keys)?;
 
     let wrapped_org_keys: HashMap<String, WrappedKeys> = org_keys
         .iter()
@@ -202,7 +148,7 @@ pub fn wrap_dek(
         })
         .collect::<std::result::Result<_, Error>>()?;
 
-    Ok((keys, wrapped_org_keys))
+    Ok((wrapped_keys, wrapped_org_keys))
 }
 
 // Need to implement the below traits
@@ -237,7 +183,7 @@ fn unwrap_single_key(cipher: &ChaCha20Poly1305, wrapped_keys: &WrappedKeys) -> R
         &wrapped_keys.nonce(),
         b"",
         &mut key
-    ).map_err(|_| Error::PinKekDecryption)?;
+    ).map_err(|_| Error::PinKekDecryption)?; // TODO we are decyprting the dek here
 
     Ok(Keys::new(key))
 }
@@ -254,6 +200,34 @@ pub fn unwrap_dek(pin_key: &LockedVec, wrapped_keys: WrappedKeys, wrapped_org_ke
         .collect::<std::result::Result<_, Error>>()?;
 
     Ok((keys, wrapped_org_keys))
+}
+
+// Serialize to base64
+// Enables serde to (de)serialize with base64
+mod base64 {
+    use serde::{Serialize, Deserialize};
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer, T: AsRef<[u8]>>(v: &T, s: S) -> Result<S::Ok, S::Error> {
+        let base64 = crate::base64::encode(v);
+        String::serialize(&base64, s)
+    }
+
+    pub fn deserialize<'de, D, T>(d: D) -> Result<T, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: TryFrom<Vec<u8>>
+    {
+        let base64 = String::deserialize(d)?;
+
+        let bytes: Vec<u8> = crate::base64::decode(base64.as_bytes())
+            .map_err(|e| serde::de::Error::custom(e))?;
+
+        T::try_from(bytes)
+            .map_err(
+                |_e| serde::de::Error::custom("Error deserializing pin state")
+            ) // TODO Handle the trait bound conversion error
+    }
 }
 
 #[cfg(test)]

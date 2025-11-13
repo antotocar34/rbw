@@ -11,10 +11,13 @@ pub mod identity;
 pub mod json;
 pub mod locked;
 pub mod pinentry;
-pub mod pin_flow;
 mod prelude;
 pub mod protocol;
 pub mod pwgen;
 pub mod wordlist;
-mod pin_crypto;
-mod pin_age_backend;
+pub mod pin_flow;
+pub mod pin_cli;
+pub mod pin_crypto; // TODO i don't think I need to expose these
+pub mod pin_backend_age;
+pub mod pin_backend;
+pub mod pin_backend_keyring;

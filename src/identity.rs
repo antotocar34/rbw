@@ -50,7 +50,7 @@ impl Identity {
                         memory.unwrap() * 1024,
                         iterations.get(),
                         parallelism.unwrap(),
-                        Some(32),
+                        Some(crate::pin_crypto::KEK_LEN),
                     )
                     .unwrap(),
                 );

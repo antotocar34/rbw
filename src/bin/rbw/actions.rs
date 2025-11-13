@@ -14,6 +14,11 @@ pub fn unlock() -> anyhow::Result<()> {
     simple_action(rbw::protocol::Action::Unlock)
 }
 
+#[cfg(feature = "pin")]
+pub fn register_pin() -> anyhow::Result<()> {
+    simple_action(rbw::protocol::Action::PinRegister)
+}
+
 pub fn unlocked() -> anyhow::Result<()> {
     match crate::sock::Sock::connect() {
         Ok(mut sock) => {

@@ -4,19 +4,53 @@ Here is the logic for the high level flow of accessing the master symmetric key 
 */
 
 use std::collections::HashMap;
+use anyhow::{Context};
 use argon2::password_hash::SaltString;
 use rand::{RngCore};
 use rand::rngs::{OsRng};
 use crate::{dirs, error, pin_crypto};
-use crate::pin_crypto::{PinState, Argon2Params};
-use crate::pin_age_backend::PinBackend;
+use crate::pin_crypto::{Argon2Params};
 use crate::config::Config;
 use crate::locked::{Vec, Keys, Password};
+use crate::pin_backend::{PinBackend, SupportedBackends, PinState};
 
+// TODO think about whether this needs to be an async function
+// I think I do need this
+pub async fn check_if_pin_available_async() -> bool {
+    let state_file = dirs::pin_state_file();
+    eprintln!("{:?}", state_file);
+    let wrapped_ls_file = dirs::pin_wrapped_local_secret_file();
+    eprintln!("{:?}", wrapped_ls_file);
+    let (a, b) = tokio::try_join!(
+        tokio::fs::try_exists(state_file),
+        tokio::fs::try_exists(wrapped_ls_file),
+    ).unwrap_or((false, false)); // TODO understand why the join could fail
+    a && b
+}
 
+// TODO this function does not work
 pub fn check_if_pin_available() -> bool {
-    std::fs::exists(dirs::pin_state_file()).is_ok() &&
-    std::fs::exists(dirs::pin_wrapped_local_secret_file()).is_ok()
+    let state_file = dirs::pin_state_file();
+    let wrapped_ls_file = dirs::pin_wrapped_local_secret_file();
+    std::fs::exists(state_file).is_ok_and(|b| b) &&
+    std::fs::exists(wrapped_ls_file).is_ok_and(|b| b)
+}
+
+// TODO if pin state file doesn't parse properly surface that
+pub fn status() -> anyhow::Result<()> {
+   let state_exists =
+       std::fs::exists(dirs::pin_state_file()).is_ok_and(|b| b) &&
+       std::fs::exists(dirs::pin_wrapped_local_secret_file()).is_ok_and(|b| b)
+       ;
+   std::fs::exists(dirs::pin_wrapped_local_secret_file())?;
+   // let pin_state = PinState::read_from_file(dirs::pin_state_file())?;
+   println!(
+       "\
+        Pin enabled: {} \
+       ",
+        state_exists
+   );
+   Ok(())
 }
 
 // TODO redo the Incorrect Password Error Messages to something much more sensible
@@ -36,7 +70,7 @@ pub fn unlock_with_pin(pin: Option<&Password>, config: Config) -> error::Result<
     ) = state.unpack()
         .map_err(|_| error::Error::IncorrectPassword {message: "Couldn't deserialize pin state".into()})?;
 
-    let backend = crate::pin_age_backend::AgePinBackend; // TODO for now this is fixed
+    let backend = crate::pin_backend_age::AgePinBackend; // TODO for now this is fixed
                                                          // But I want to implement OS keyring
 
     let local_secret = backend.retrieve_local_secret(&config)
@@ -51,40 +85,52 @@ pub fn unlock_with_pin(pin: Option<&Password>, config: Config) -> error::Result<
     Ok((keys, org_keys))
 }
 
-pub fn register_pin(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Password>, config: &Config, backend: &crate::pin_age_backend::AgePinBackend) -> anyhow::Result<()> {
+// TODO evaluate whether it is worth it to make this async
+pub fn register(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Password>, config: &Config, backend: &impl PinBackend) -> anyhow::Result<()> {
 
-    let salt = SaltString::generate(&mut OsRng);
     let local_secret = generate_local_secret();
 
     backend.store_local_secret(&local_secret, &config)?;
 
     let kdf_params = if let Some(pin_config) = config.pin_config.as_ref() {
-        &pin_config.kdf_params
+        &pin_config.kdf_params.clone().unwrap_or(Argon2Params::new())
     } else {
         &Argon2Params::new()
     };
 
+    let salt = SaltString::generate(&mut OsRng);
     let kek = pin_crypto::derive_kek_from_pin(pin, &local_secret, &salt, &kdf_params)?;
 
     let (wrapped_keys, wrapped_org_keys) = pin_crypto::wrap_dek(&kek, &keys, &org_keys)?;
 
-    let state_to_save = PinState::new(wrapped_keys, wrapped_org_keys, salt, kdf_params.clone(), pin.is_none())?; // TODO not a fan of the clone here
+    let state_to_save = PinState::new(
+        wrapped_keys,
+        wrapped_org_keys,
+        salt,
+        kdf_params.clone(),
+        pin.is_none(),
+        backend.identifier()
+    )?;
 
     state_to_save.write_to_file()?;
 
     Ok(())
 }
 
-// Simple clear state file and
-pub fn clear_pin(backend: &crate::pin_age_backend::AgePinBackend) -> anyhow::Result<()> {
+pub fn clear(backend: &impl PinBackend) -> anyhow::Result<()> {
+
     backend.clear_local_secret()?;
-    std::fs::remove_file(dirs::pin_state_file())?;
+    let pin_state_file = dirs::pin_state_file();
+    if std::fs::exists(pin_state_file).is_ok() {
+        std::fs::remove_file(dirs::pin_state_file())?;
+    }
     Ok(())
 }
 
 pub fn empty_pin() -> bool {
-    // match PinState::read_from_file(crate::dirs::pin_state_file());
-    false
+    PinState::read_from_file(dirs::pin_state_file())
+        .map(|s| s.empty_pin)
+        .unwrap_or(false)
 }
 
 // simply generate 32 bytes
@@ -93,6 +139,19 @@ fn generate_local_secret() -> Vec {
     buf.extend(std::iter::repeat_n(0, 32));
     rand::thread_rng().fill_bytes(buf.data_mut());
     buf
+}
+
+fn get_backend() -> anyhow::Result<impl PinBackend> {
+    let pin_state = PinState::read_from_file(dirs::pin_state_file())?;
+
+    let backend = SupportedBackends::from_str(pin_state.backend_identifier.as_ref())?;
+
+    match backend {
+        SupportedBackends::Age(b) => Ok(b),
+        _ => anyhow::bail!("Could not read backend type")
+        // SupportedBackends::(b) => Ok(b)
+    }
+
 }
 
 #[cfg(test)]

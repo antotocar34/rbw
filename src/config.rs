@@ -24,7 +24,7 @@ pub struct Config {
     pub device_id: Option<String>,
     #[cfg(feature = "pin")]
     #[serde(flatten)]
-    pub pin_config: Option<crate::pin_age_backend::PinBackendConfig>
+    pub pin_config: Option<crate::pin_backend::PinBackendConfig>
 }
 
 impl Default for Config {
@@ -41,7 +41,8 @@ impl Default for Config {
             pinentry: default_pinentry(),
             client_cert_path: None,
             device_id: None,
-            pin_config: None
+            #[cfg(feature = "pin")]
+            pin_config: Some(crate::pin_backend::PinBackendConfig::new())
         }
     }
 }
@@ -139,11 +140,19 @@ impl Config {
         Ok(())
     }
 
+    // TODO Add pin validation
+    // Like identity file exists
     pub fn validate() -> Result<()> {
         let config = Self::load()?;
         if config.email.is_none() {
             return Err(Error::ConfigMissingEmail);
         }
+
+        #[cfg(feature = "pin")]
+        if let Some(pin_config) = config.pin_config {
+            // pin_config.validate() TODO implement the API to the left :)
+        }
+
         Ok(())
     }
 
