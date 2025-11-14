@@ -1,4 +1,3 @@
-use aes::cipher::Key;
 use serde::{Deserialize, Serialize};
 use crate::pin::backend::{BackendConfig, PinBackend};
 use keyring::{Entry};

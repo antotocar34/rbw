@@ -20,16 +20,16 @@ pub fn status() -> anyhow::Result<()> {
 
    let state_exists = std::fs::exists(dirs::pin_state_file()).is_ok_and(|b| b);
 
-   let enabled_msg = format!("Pin enabled: {}", state_exists);
+   let enabled_msg = format!("Pin enabled: {state_exists}");
 
-   let mut backend_msg = "".to_string();
+   let mut backend_msg = String::new();
    if let Ok(pin_state) = load_pin_state() {
        let backend = pin_state.backend;
        let backend_name = match backend {
            Backend::Age => "age",
            Backend::OSKeyring => "keyring"
        };
-       backend_msg.push_str(format!("Backend: {}", backend_name).as_str());
+       backend_msg.push_str(format!("Backend: {backend_name}").as_str());
    }
    let parts = [ enabled_msg, backend_msg];
    let msg = parts.join("\n");
@@ -38,7 +38,7 @@ pub fn status() -> anyhow::Result<()> {
 }
 
 // Meaning for return something else for an unrecoverable error
-pub fn unlock_with_pin(pin: Option<&Password>, pin_state: PinState, config: Config) -> error::Result<(Keys, HashMap<String, Keys>)> {
+pub fn unlock_with_pin(pin: Option<&Password>, pin_state: &PinState, config: Config) -> error::Result<(Keys, HashMap<String, Keys>)> {
 
     let (
         wrapped_key,
@@ -64,17 +64,17 @@ pub fn unlock_with_pin(pin: Option<&Password>, pin_state: PinState, config: Conf
 }
 
 
-pub fn register(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Password>, config: &Config, backend: Backend) -> anyhow::Result<()> {
+pub fn register<S: ::std::hash::BuildHasher>(keys: &Keys, org_keys: &HashMap<String, Keys, S>, pin: Option<&Password>, config: &Config, backend: Backend) -> anyhow::Result<()> {
 
 
     let pin_config = config.pin_config
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Pin Config not set"))?;
 
-    pin_config.enable_pin.then_some(()).ok_or(anyhow::anyhow!("enable_pin not set in config"))?;
+    pin_config.enable_pin.then_some(()).ok_or_else(|| anyhow::anyhow!("enable_pin not set in config"))?;
 
     let local_secret = generate_local_secret(OsRng);
-    backend.store_local_secret(&local_secret, &pin_config)?;
+    backend.store_local_secret(&local_secret, pin_config)?;
 
     let default_kdf_params = Argon2Params::new();
     let kdf_params = if let Some(pin_config) = config.pin_config.as_ref() {
@@ -91,7 +91,7 @@ pub fn register(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Pass
     let state_to_save = PinState::new(
         wrapped_keys,
         wrapped_org_keys,
-        salt,
+        &salt,
         kdf_params.clone(),
         pin.is_none(),
         backend
@@ -111,10 +111,10 @@ pub fn clear() -> anyhow::Result<()> {
         state.backend
             .clear_local_secret()
             .context("clearing local secret")?;
-    };
+    }
 
-    match std::fs::remove_file(&dirs::pin_state_file()) {
-        Ok(_) => Ok(()),
+    match std::fs::remove_file(dirs::pin_state_file()) {
+        Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e).context("removing pin state file"),
     }

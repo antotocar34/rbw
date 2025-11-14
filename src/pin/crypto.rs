@@ -138,13 +138,13 @@ fn wrap_single_key(cipher: &ChaCha20Poly1305, keys: &Keys, context: &String) -> 
     Ok(WrappedKey::new(ciphertext, nonce, context.to_owned()))
 }
 // Given the pin and the local_secret (age / keyring) encrypt the dek
-pub fn wrap_dek(
+pub fn wrap_dek<S: ::std::hash::BuildHasher>(
     pin_key: &LockedVec,
     keys: &Keys,
-    org_keys: &HashMap<String, Keys>
+    org_keys: &HashMap<String, Keys, S>
 ) -> Result<(WrappedKey, HashMap<String, WrappedKey>)> {
     let cipher = ChaCha20Poly1305::new_from_slice(pin_key.data())
-        .map_err(|e| Error::PinError {message: "Kek has invalid length".to_string()})?;
+        .map_err(|_| Error::PinError {message: "Kek has invalid length".to_string()})?;
 
     let context_string = format!("pin-wrapped-dek|profile={}", crate::dirs::profile());
     let wrapped_keys = wrap_single_key(&cipher, keys, &context_string)?;
@@ -196,7 +196,7 @@ fn unwrap_single_key(cipher: &ChaCha20Poly1305, wrapped_keys: &WrappedKey) -> Re
 
     Ok(Keys::new(key))
 }
-pub fn unwrap_dek(pin_key: &LockedVec, wrapped_keys: &WrappedKey, wrapped_org_keys: &HashMap<String, WrappedKey>) -> Result<(Keys, HashMap<String, Keys>)> {
+pub fn unwrap_dek<S: ::std::hash::BuildHasher>(pin_key: &LockedVec, wrapped_keys: &WrappedKey, wrapped_org_keys: &HashMap<String, WrappedKey, S>) -> Result<(Keys, HashMap<String, Keys>)> {
     let cipher = ChaCha20Poly1305::new_from_slice(pin_key.data())
         .map_err(|_| Error::PinError {message: "invalid keylen; couldn't initialize chacha20poly1305 cipher".into() })?;
 

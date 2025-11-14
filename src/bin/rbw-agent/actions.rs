@@ -445,7 +445,7 @@ async fn unlock_state(
                 };
 
                 let config = Config::load()?;
-                let (keys, org_keys) = match rbw::pin::flow::unlock_with_pin(pin.as_ref(), pin_state, config) {
+                let (keys, org_keys) = match rbw::pin::flow::unlock_with_pin(pin.as_ref(), &pin_state, config) {
                     Ok(keys) => keys,
                     Err(error::Error::IncorrectPassword {message}) => {
                         if i == 3 {

@@ -8,12 +8,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use age::{plugin, Decryptor};
 use anyhow::{anyhow, Context};
-use clap::error;
 use crate::locked::Vec;
-use crate::config::Config;
 use crate::dirs;
-use crate::error::Error;
-use crate::pin::backend::{BackendConfig, PinBackend, PinBackendConfig};
+use crate::pin::backend::{BackendConfig, PinBackend};
 
 pub const SUPPORTED_AGE_PLUGINS: [&str; 3] = [
     "yubikey", // https://github.com/str4d/age-plugin-yubikey
@@ -30,6 +27,12 @@ pub struct AgeConfig {
     pub identity_file_path: PathBuf
 }
 
+impl Default for AgeConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgeConfig {
     pub fn new() -> Self {
 
@@ -37,10 +40,10 @@ impl AgeConfig {
             identity_file_path: "".into()
         }
     }
-    fn validate(&self) -> anyhow::Result<()> {
+    fn _validate(&self) -> anyhow::Result<()> {
         match fs::exists::<&PathBuf>(&self.identity_file_path) {
             Ok(_) => Ok(()),
-            Err(e) => Err(anyhow!("Age identity file not found"))
+            Err(_) => Err(anyhow!("Age identity file not found"))
         }
 
         // TODO check if the file is parseable and the plugin is supported
@@ -69,8 +72,9 @@ impl PinBackend for AgePinBackend {
         );
         let decryptor = Decryptor::new(reader)?;
 
+        let identities: [&dyn age::Identity; 1] = [&identity_plugin];
         let mut decrypted_reader =
-            decryptor.decrypt(std::iter::once(&identity_plugin as &dyn age::Identity))
+            decryptor.decrypt(identities.into_iter())
                 .context("Failed to decrypt age wrapped local secret")?;
 
         let mut kek = Vec::new();
@@ -92,7 +96,6 @@ impl PinBackend for AgePinBackend {
             age::NoCallbacks,
         )?;
 
-        let recipient = &plugin_recipient as &dyn age::Recipient;
 
         let mut stored_secret = {
             let encrypted_age_path = dirs::pin_age_wrapped_local_secret_file();
@@ -106,7 +109,8 @@ impl PinBackend for AgePinBackend {
             file
         };
 
-        let encryptor = age::Encryptor::with_recipients(std::iter::once(recipient))?;
+        let recipients: [&dyn age::Recipient; 1] = [&plugin_recipient; 1];
+        let encryptor = age::Encryptor::with_recipients(recipients.into_iter())?;
         let mut writer = encryptor.wrap_output(&mut stored_secret)?;
 
         writer.write_all(local_secret.data())?;
@@ -212,7 +216,7 @@ mod tests {
             client_cert_path: None,
             device_id: None,
             pin_config: Some(
-                PinBackendConfig {
+                pin::backend::PinBackendConfig {
                     enable_pin: true,
                     keyring: None,
                     age: Some( AgeConfig { identity_file_path:  identity_file.path().into() }),

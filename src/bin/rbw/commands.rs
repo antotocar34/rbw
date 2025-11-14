@@ -1,6 +1,6 @@
 use std::{fmt::Write as _, io::Write as _, os::unix::ffi::OsStrExt as _};
 
-use anyhow::{anyhow, Context as _};
+use anyhow::Context as _;
 
 // The default number of seconds the generated TOTP
 // code lasts for before a new one must be generated
@@ -995,7 +995,7 @@ pub fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
                 .age
                 .as_mut()
                 .unwrap()
-                .identity_file_path = value.into()
+                .identity_file_path = value.into();
         },
 
         #[cfg(feature = "pin")]
@@ -1006,7 +1006,7 @@ pub fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
                 .kdf_params
                 .get_or_insert_with(rbw::pin::crypto::Argon2Params::new)
                 .memory = value.parse::<u32>()
-                .context("can't parse input as u32")?
+                .context("can't parse input as u32")?;
         },
 
         #[cfg(feature = "pin")]
@@ -1017,7 +1017,7 @@ pub fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
                 .kdf_params
                 .get_or_insert_with(rbw::pin::crypto::Argon2Params::new)
                 .iterations = value.parse::<u32>()
-                .context("can't parse input as u32")?
+                .context("can't parse input as u32")?;
         },
 
         #[cfg(feature = "pin")]
@@ -1028,7 +1028,7 @@ pub fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
                 .kdf_params
                 .get_or_insert_with(rbw::pin::crypto::Argon2Params::new)
                 .parallelism = value.parse::<u32>()
-                .context("can't parse input as u32")?
+                .context("can't parse input as u32")?;
         },
 
         _ => return Err(anyhow::anyhow!("invalid config key: {}", key)),

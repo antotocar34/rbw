@@ -10,11 +10,8 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Context};
 use argon2::password_hash::SaltString;
 use serde::{Deserialize, Serialize};
-use crate::config::Config;
-use crate::dirs;
 use crate::pin::backend::age::{AgeConfig, AgePinBackend};
 use crate::pin::backend::keyring::{KeyringConfig, KeyringPinBackend};
-use crate::pin::cli::Pin;
 use crate::pin::crypto::{Argon2Params, WrappedKey};
 
 #[derive(Serialize, Deserialize, clap::ValueEnum, Clone, Debug)]
@@ -40,12 +37,12 @@ impl PinBackend for Backend {
     fn retrieve_local_secret(&self, config: &PinBackendConfig) -> anyhow::Result<crate::locked::Vec> {
         match self {
             Self::Age => {
-                let config = config.age.as_ref().ok_or(anyhow!("age config not set"))?;
-                AgePinBackend.retrieve_local_secret(&config)
+                let config = config.age.as_ref().ok_or_else(|| anyhow!("age config not set"))?;
+                AgePinBackend.retrieve_local_secret(config)
             }
             Self::OSKeyring => {
-                let config = config.keyring.as_ref().ok_or(anyhow!("age config not set"))?;
-                KeyringPinBackend.retrieve_local_secret(&config)
+                let config = config.keyring.as_ref().ok_or_else( || anyhow!("age config not set"))?;
+                KeyringPinBackend.retrieve_local_secret(config)
             }
         }
     }
@@ -53,12 +50,12 @@ impl PinBackend for Backend {
     fn store_local_secret(&self, kek: &crate::locked::Vec, config: &PinBackendConfig) -> anyhow::Result<()> {
         match self {
             Self::Age => {
-                let config = config.age.as_ref().ok_or(anyhow!("age config not set"))?;
-                AgePinBackend.store_local_secret(kek, &config)
+                let config = config.age.as_ref().ok_or_else(|| anyhow!("age config not set"))?;
+                AgePinBackend.store_local_secret(kek, config)
             },
             Self::OSKeyring => {
-                let config = config.keyring.as_ref().ok_or(anyhow!("keyring config not set"))?;
-                KeyringPinBackend.store_local_secret(kek, &config)
+                let config = config.keyring.as_ref().ok_or_else(|| anyhow!("keyring config not set"))?;
+                KeyringPinBackend.store_local_secret(kek, config)
             }
         }
     }
@@ -87,6 +84,12 @@ pub struct PinBackendConfig {
 
 pub trait BackendConfig { }
 
+impl Default for PinBackendConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PinBackendConfig {
     pub fn new() -> Self {
         Self {
@@ -112,7 +115,7 @@ impl PinState {
     pub fn new(
         wrapped_keys: WrappedKey,
         wrapped_org_keys: HashMap<String, WrappedKey>,
-        salt: SaltString,
+        salt: &SaltString,
         kdf_params: Argon2Params,
         empty_pin: bool,
         backend: Backend
