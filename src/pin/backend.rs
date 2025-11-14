@@ -3,58 +3,83 @@
 mod age;
 mod keyring;
 
+use crate::pin::backend::age::{AgeConfig, AgePinBackend};
+use crate::pin::backend::keyring::{KeyringConfig, KeyringPinBackend};
+use crate::pin::crypto::{Argon2Params, WrappedKey};
+use anyhow::{anyhow, Context};
+use argon2::password_hash::SaltString;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
-use anyhow::{anyhow, Context};
-use argon2::password_hash::SaltString;
-use serde::{Deserialize, Serialize};
-use crate::pin::backend::age::{AgeConfig, AgePinBackend};
-use crate::pin::backend::keyring::{KeyringConfig, KeyringPinBackend};
-use crate::pin::crypto::{Argon2Params, WrappedKey};
 
 #[derive(Serialize, Deserialize, clap::ValueEnum, Clone, Debug)]
 pub enum Backend {
     Age,
-    OSKeyring
-    // Keyring(OsKeyringPinBackend)
+    OSKeyring, // Keyring(OsKeyringPinBackend)
 }
 
-impl BackendConfig for PinBackendConfig { }
+impl BackendConfig for PinBackendConfig {}
 
 pub trait PinBackend {
     type Config: BackendConfig;
-    fn retrieve_local_secret(&self, config: &Self::Config) -> anyhow::Result<crate::locked::Vec>;
+    fn retrieve_local_secret(
+        &self,
+        config: &Self::Config,
+    ) -> anyhow::Result<crate::locked::Vec>;
 
-    fn store_local_secret(&self, kek: &crate::locked::Vec, config: &Self::Config) -> anyhow::Result<()>;
+    fn store_local_secret(
+        &self,
+        kek: &crate::locked::Vec,
+        config: &Self::Config,
+    ) -> anyhow::Result<()>;
 
     fn clear_local_secret(&self) -> anyhow::Result<()>;
 }
 
 impl PinBackend for Backend {
     type Config = PinBackendConfig;
-    fn retrieve_local_secret(&self, config: &PinBackendConfig) -> anyhow::Result<crate::locked::Vec> {
+    fn retrieve_local_secret(
+        &self,
+        config: &PinBackendConfig,
+    ) -> anyhow::Result<crate::locked::Vec> {
         match self {
             Self::Age => {
-                let config = config.age.as_ref().ok_or_else(|| anyhow!("age config not set"))?;
+                let config = config
+                    .age
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("age config not set"))?;
                 AgePinBackend.retrieve_local_secret(config)
             }
             Self::OSKeyring => {
-                let config = config.keyring.as_ref().ok_or_else( || anyhow!("age config not set"))?;
+                let config = config
+                    .keyring
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("age config not set"))?;
                 KeyringPinBackend.retrieve_local_secret(config)
             }
         }
     }
 
-    fn store_local_secret(&self, kek: &crate::locked::Vec, config: &PinBackendConfig) -> anyhow::Result<()> {
+    fn store_local_secret(
+        &self,
+        kek: &crate::locked::Vec,
+        config: &PinBackendConfig,
+    ) -> anyhow::Result<()> {
         match self {
             Self::Age => {
-                let config = config.age.as_ref().ok_or_else(|| anyhow!("age config not set"))?;
+                let config = config
+                    .age
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("age config not set"))?;
                 AgePinBackend.store_local_secret(kek, config)
-            },
+            }
             Self::OSKeyring => {
-                let config = config.keyring.as_ref().ok_or_else(|| anyhow!("keyring config not set"))?;
+                let config = config
+                    .keyring
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("keyring config not set"))?;
                 KeyringPinBackend.store_local_secret(kek, config)
             }
         }
@@ -63,7 +88,7 @@ impl PinBackend for Backend {
     fn clear_local_secret(&self) -> anyhow::Result<()> {
         match self {
             Self::Age => AgePinBackend.clear_local_secret(),
-            Self::OSKeyring => KeyringPinBackend.clear_local_secret()
+            Self::OSKeyring => KeyringPinBackend.clear_local_secret(),
         }
     }
 }
@@ -81,8 +106,7 @@ pub struct PinBackendConfig {
     pub keyring: Option<KeyringConfig>,
 }
 
-
-pub trait BackendConfig { }
+pub trait BackendConfig {}
 
 impl Default for PinBackendConfig {
     fn default() -> Self {
@@ -96,7 +120,7 @@ impl PinBackendConfig {
             enable_pin: false,
             kdf_params: Some(Argon2Params::new()),
             age: Some(AgeConfig::new()),
-            keyring: None
+            keyring: None,
         }
     }
 }
@@ -108,7 +132,7 @@ pub struct PinState {
     salt: String,
     kdf_params: Argon2Params,
     pub empty_pin: bool,
-    pub backend: Backend
+    pub backend: Backend,
 }
 
 impl PinState {
@@ -118,7 +142,7 @@ impl PinState {
         salt: &SaltString,
         kdf_params: Argon2Params,
         empty_pin: bool,
-        backend: Backend
+        backend: Backend,
     ) -> anyhow::Result<Self> {
         let slf = Self {
             wrapped_keys,
@@ -126,29 +150,41 @@ impl PinState {
             salt: salt.to_string(),
             kdf_params,
             empty_pin,
-            backend
+            backend,
         };
         Ok(slf)
     }
 
-    pub fn unpack(&self) -> anyhow::Result<(WrappedKey, HashMap<String, WrappedKey>, SaltString, Argon2Params, bool, Backend)> {
+    pub fn unpack(
+        &self,
+    ) -> anyhow::Result<(
+        WrappedKey,
+        HashMap<String, WrappedKey>,
+        SaltString,
+        Argon2Params,
+        bool,
+        Backend,
+    )> {
         Ok((
             self.wrapped_keys.clone(),
             self.wrapped_org_keys.clone(),
             {
                 match SaltString::from_b64(self.salt.as_str()) {
                     Ok(salt) => salt,
-                    Err(e) => anyhow::bail!("Error deserializing salt: {}", e)
+                    Err(e) => {
+                        anyhow::bail!("Error deserializing salt: {}", e)
+                    }
                 }
             },
             self.kdf_params.clone(),
             self.empty_pin,
-            self.backend.clone()
+            self.backend.clone(),
         ))
     }
 
     pub fn read_from_file(path: PathBuf) -> anyhow::Result<Self> {
-        let file = std::fs::File::open(path).context("Could not open pin state file")?;
+        let file = std::fs::File::open(path)
+            .context("Could not open pin state file")?;
         let reader = std::io::BufReader::new(file);
         serde_json::from_reader(reader).map_err(|e| anyhow!(e))
     }
@@ -167,6 +203,4 @@ impl PinState {
         writer.get_ref().sync_all()?;
         Ok(())
     }
-
 }
-

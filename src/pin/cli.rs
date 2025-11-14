@@ -1,5 +1,4 @@
 #[cfg(feature = "pin")]
-
 #[derive(Debug, clap::Parser)]
 pub enum Pin {
     #[command(about = "Set up the PIN for local unlock")]
@@ -21,16 +20,16 @@ pub enum Pin {
     Clear,
 
     #[command(about = "Show status of PIN")]
-    Status
+    Status,
 }
 
 impl Pin {
     pub fn subcommand_name(&self) -> String {
         match self {
             Self::Set { .. } => "set",
-            Self::Status     => "status",
-            Self::Clear      => "clear",
+            Self::Status => "status",
+            Self::Clear => "clear",
         }
-            .to_string()
+        .to_string()
     }
 }
