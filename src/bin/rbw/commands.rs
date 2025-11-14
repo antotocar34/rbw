@@ -1,6 +1,6 @@
 use std::{fmt::Write as _, io::Write as _, os::unix::ffi::OsStrExt as _};
 
-use anyhow::Context as _;
+use anyhow::{anyhow, Context as _};
 
 // The default number of seconds the generated TOTP
 // code lasts for before a new one must be generated
@@ -975,6 +975,62 @@ pub fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
             config.sync_interval = interval;
         }
         "pinentry" => config.pinentry = value.to_string(),
+
+        #[cfg(feature = "pin")]
+        "enable_pin" => config
+                                .pin_config
+                                .get_or_insert_with(rbw::pin::backend::PinBackendConfig::new)
+                                .enable_pin = {
+            match value {
+                "true" => true,
+                "false" => false,
+                _ => anyhow::bail!("enable_pin can only be set to true or false") }
+            },
+
+        #[cfg(feature = "pin")]
+        "age_identity_file_path" => {
+            config
+                .pin_config
+                .get_or_insert_with(rbw::pin::backend::PinBackendConfig::new)
+                .age
+                .as_mut()
+                .unwrap()
+                .identity_file_path = value.into()
+        },
+
+        #[cfg(feature = "pin")]
+        "argon2_memory" => {
+            config
+                .pin_config
+                .get_or_insert_with(rbw::pin::backend::PinBackendConfig::new)
+                .kdf_params
+                .get_or_insert_with(rbw::pin::crypto::Argon2Params::new)
+                .memory = value.parse::<u32>()
+                .context("can't parse input as u32")?
+        },
+
+        #[cfg(feature = "pin")]
+        "argon2_iterations" => {
+            config
+                .pin_config
+                .get_or_insert_with(rbw::pin::backend::PinBackendConfig::new)
+                .kdf_params
+                .get_or_insert_with(rbw::pin::crypto::Argon2Params::new)
+                .iterations = value.parse::<u32>()
+                .context("can't parse input as u32")?
+        },
+
+        #[cfg(feature = "pin")]
+        "argon2_parallelism" => {
+            config
+                .pin_config
+                .get_or_insert_with(rbw::pin::backend::PinBackendConfig::new)
+                .kdf_params
+                .get_or_insert_with(rbw::pin::crypto::Argon2Params::new)
+                .parallelism = value.parse::<u32>()
+                .context("can't parse input as u32")?
+        },
+
         _ => return Err(anyhow::anyhow!("invalid config key: {}", key)),
     }
     config.save()?;
@@ -1004,6 +1060,60 @@ pub fn config_unset(key: &str) -> anyhow::Result<()> {
             config.lock_timeout = rbw::config::default_lock_timeout();
         }
         "pinentry" => config.pinentry = rbw::config::default_pinentry(),
+
+        #[cfg(feature = "pin")]
+        "enable_pin" => {
+            if let Some(pin) = config.pin_config.as_mut() {
+                pin.enable_pin = false;
+            }
+        }
+
+        #[cfg(feature = "pin")]
+        "age_identity_file_path" => {
+            if let Some(pin) = config.pin_config.as_mut() {
+                // Drop the Age sub-config entirely
+                pin.age = None;
+            }
+        }
+
+        #[cfg(feature = "pin")]
+        "keyring_entry" => {
+            if let Some(pin) = config.pin_config.as_mut() {
+                // Drop the keyring sub-config entirely
+                pin.keyring = None;
+            }
+        }
+
+        #[cfg(feature = "pin")]
+        "argon2_memory" => {
+            if let Some(pin) = config.pin_config.as_mut() {
+                if let Some(kdf) = pin.kdf_params.as_mut() {
+                    let defaults = rbw::pin::crypto::Argon2Params::new();
+                    kdf.memory = defaults.memory;
+                }
+            }
+        }
+
+        #[cfg(feature = "pin")]
+        "argon2_iterations" => {
+            if let Some(pin) = config.pin_config.as_mut() {
+                if let Some(kdf) = pin.kdf_params.as_mut() {
+                    let defaults = rbw::pin::crypto::Argon2Params::new();
+                    kdf.iterations = defaults.iterations;
+                }
+            }
+        }
+
+        #[cfg(feature = "pin")]
+        "argon2_parallelism" => {
+            if let Some(pin) = config.pin_config.as_mut() {
+                if let Some(kdf) = pin.kdf_params.as_mut() {
+                    let defaults = rbw::pin::crypto::Argon2Params::new();
+                    kdf.parallelism = defaults.parallelism;
+                }
+            }
+        }
+
         _ => return Err(anyhow::anyhow!("invalid config key: {}", key)),
     }
     config.save()?;

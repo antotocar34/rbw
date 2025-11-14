@@ -1,8 +1,10 @@
 #![cfg(feature = "pin")]
 /*
 This module implements cryptography operations relating to the PIN feature.
+Refer to the design document for an overview of the design of the feature
 
-In particular,
+
+
 
 */
 use std::collections::HashMap;
@@ -17,7 +19,7 @@ use crate::locked::{Vec as LockedVec, Keys, Password};
 use crate::error::{ Result, Error };
 
 use chacha20poly1305::{
-    aead::{Buffer, AeadCore, KeyInit}, // TODO figure out
+    aead::{Buffer, AeadCore, KeyInit},
     AeadInPlace,
     ChaCha20Poly1305,
     Nonce,
@@ -32,17 +34,20 @@ pub struct WrappedKey {
     #[serde(with = "base64")]
     wrapped_keys: Vec<u8>,
     #[serde(with = "base64")]
-    nonce: [u8; 12]
+    nonce: [u8; 12],
+    // Bind the key to the correct profile
+    context: String
 }
 
 impl WrappedKey {
     pub fn bytes(&self) -> &[u8] {
        self.wrapped_keys.as_slice()
     }
-    pub fn new(wrapped_keys: Vec<u8>, nonce: Nonce) -> Self {
+    pub fn new(wrapped_keys: Vec<u8>, nonce: Nonce, context: String) -> Self {
         Self {
             wrapped_keys,
-            nonce: (*nonce.as_slice()).try_into().unwrap() // Nonce is effectively defined to be a [u8; 12]
+            nonce: (*nonce.as_slice()).try_into().unwrap(), // Nonce is effectively defined to be a [u8; 12]
+            context
         }
     }
     fn nonce(&self) -> Nonce {
@@ -54,11 +59,11 @@ impl WrappedKey {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Argon2Params {
     #[serde(rename="argon2_memory")]
-    memory: u32,
+    pub memory: u32,
     #[serde(rename="argon2_iterations")]
-    iterations: u32,
+    pub iterations: u32,
     #[serde(rename="argon2_parallelism")]
-    parallelism: u32
+    pub parallelism: u32
 }
 
 impl Argon2Params {
@@ -97,7 +102,7 @@ pub fn derive_kek_from_pin(
         argon2::Algorithm::Argon2id,
         argon2::Version::V0x13,
         kdf_params.to_params()?
-    ).map_err(|_| Error::Argon2)?; // TODO clean this up
+    ).map_err(|_| Error::Argon2)?;
 
 
     let mut pin_key = LockedVec::new();
@@ -115,7 +120,7 @@ pub fn derive_kek_from_pin(
     Ok(pin_key)
 }
 
-fn wrap_single_key(cipher: &ChaCha20Poly1305, keys: &Keys) -> Result<WrappedKey> {
+fn wrap_single_key(cipher: &ChaCha20Poly1305, keys: &Keys, context: &String) -> Result<WrappedKey> {
 
     let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng); // 96-bits; unique per message
 
@@ -124,13 +129,13 @@ fn wrap_single_key(cipher: &ChaCha20Poly1305, keys: &Keys) -> Result<WrappedKey>
         buf.extend(keys.enc_key().iter().copied());
         buf.extend(keys.mac_key().iter().copied());
 
-        cipher.encrypt_in_place(&nonce, b"", &mut buf)
+        cipher.encrypt_in_place(&nonce, context.as_bytes(), &mut buf)
             .map_err(|e| Error::PinError {message: e.to_string()})?;
 
         buf.data().to_vec()
     };
 
-    Ok(WrappedKey::new(ciphertext, nonce))
+    Ok(WrappedKey::new(ciphertext, nonce, context.to_owned()))
 }
 // Given the pin and the local_secret (age / keyring) encrypt the dek
 pub fn wrap_dek(
@@ -141,12 +146,14 @@ pub fn wrap_dek(
     let cipher = ChaCha20Poly1305::new_from_slice(pin_key.data())
         .map_err(|e| Error::PinError {message: "Kek has invalid length".to_string()})?;
 
-    let wrapped_keys = wrap_single_key(&cipher, keys)?;
+    let context_string = format!("pin-wrapped-dek|profile={}", crate::dirs::profile());
+    let wrapped_keys = wrap_single_key(&cipher, keys, &context_string)?;
 
     let wrapped_org_keys: HashMap<String, WrappedKey> = org_keys
         .iter()
         .map(|(org, k)| {
-            wrap_single_key(&cipher, k).map(|wk| (org.clone(), wk))
+            let context_string_org = format!("{}|org={}",context_string.clone(), org.as_str());
+            wrap_single_key(&cipher, k, &context_string_org).map(|wk| (org.clone(), wk))
         })
         .collect::<std::result::Result<_, Error>>()?;
 
@@ -183,14 +190,15 @@ fn unwrap_single_key(cipher: &ChaCha20Poly1305, wrapped_keys: &WrappedKey) -> Re
 
     cipher.decrypt_in_place(
         &wrapped_keys.nonce(),
-        b"",
+        wrapped_keys.context.as_bytes(),
         &mut key
     ).map_err(|_| Error::PinError {message: "Decryption error".to_string() })?;
 
     Ok(Keys::new(key))
 }
 pub fn unwrap_dek(pin_key: &LockedVec, wrapped_keys: &WrappedKey, wrapped_org_keys: &HashMap<String, WrappedKey>) -> Result<(Keys, HashMap<String, Keys>)> {
-    let cipher = ChaCha20Poly1305::new_from_slice(pin_key.data()).unwrap(); // TODO handle error
+    let cipher = ChaCha20Poly1305::new_from_slice(pin_key.data())
+        .map_err(|_| Error::PinError {message: "invalid keylen; couldn't initialize chacha20poly1305 cipher".into() })?;
 
     let keys = unwrap_single_key(&cipher, wrapped_keys)?;
 
@@ -227,7 +235,7 @@ mod base64 {
         T::try_from(bytes)
             .map_err(
                 |_e| serde::de::Error::custom("Error deserializing pin state")
-            ) // TODO Handle the trait bound conversion error
+            )
     }
 }
 
@@ -258,7 +266,7 @@ mod tests {
         let pin = Password::new(create_vec(b"1234".as_ref()));
         let local_secret = create_vec([b'0';32].as_ref());
         let salt = SaltString::generate(&mut OsRng);
-        let kdf_params = Argon2Params::new();
+        let kdf_params = Argon2Params {memory: 1024, iterations: 1, parallelism: 1};
         let derived_kek = derive_kek_from_pin(Some(&pin), &local_secret, &salt, &kdf_params).unwrap();
 
         let (wrapped_dek, wrapped_org_keys) = wrap_dek(&derived_kek, &dek, &org_keys).unwrap();

@@ -140,18 +140,13 @@ impl Config {
         Ok(())
     }
 
-    // TODO Add pin validation
-    // Like identity file exists
     pub fn validate() -> Result<()> {
         let config = Self::load()?;
         if config.email.is_none() {
             return Err(Error::ConfigMissingEmail);
         }
 
-        #[cfg(feature = "pin")]
-        if let Some(pin_config) = config.pin_config {
-            // pin_config.validate() TODO implement the API to the left :)
-        }
+
 
         Ok(())
     }

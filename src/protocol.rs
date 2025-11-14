@@ -183,6 +183,7 @@ pub enum Action {
     },
     Quit,
     Version,
+
     #[cfg(feature = "pin")]
     PinRegister {
         empty_pin: bool,

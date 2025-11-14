@@ -6,45 +6,19 @@ Here is the logic for the high level flow of accessing the master symmetric key 
 use std::collections::HashMap;
 use anyhow::{Context};
 use argon2::password_hash::SaltString;
-use rand::{RngCore};
+use rand::{CryptoRng, RngCore};
 use rand::rngs::{OsRng};
-use rustix::path::Arg;
 use crate::{pin, dirs, error};
-use crate::pin::crypto::{wrap_dek, Argon2Params};
+use crate::pin::crypto::{Argon2Params};
 use crate::config::Config;
+use crate::error::Error;
 use crate::locked::{Vec, Keys, Password};
 use crate::pin::backend::{PinBackend, Backend, PinState};
 
-// TODO think about whether this needs to be an async function
-// I think I do need this
-pub async fn check_if_pin_available_async() -> bool {
-    let state_file = dirs::pin_state_file();
-    let wrapped_ls_file = dirs::pin_wrapped_local_secret_file();
-
-    let (a, b) = tokio::try_join!(
-        tokio::fs::try_exists(state_file),
-        tokio::fs::try_exists(wrapped_ls_file),
-    ).unwrap_or((false, false)); // TODO understand why the join could fail
-    a && b
-}
-
-pub fn check_if_pin_available() -> bool {
-    let state_file = dirs::pin_state_file();
-    let wrapped_ls_file = dirs::pin_wrapped_local_secret_file();
-    std::fs::exists(state_file).is_ok_and(|b| b) &&
-    std::fs::exists(wrapped_ls_file).is_ok_and(|b| b)
-}
-
-// TODO if pin state file doesn't parse properly surface that
-// TODO validate pin config
 pub fn status() -> anyhow::Result<()> {
 
 
-   // TODO this is age only
-   let state_exists =
-       std::fs::exists(dirs::pin_state_file()).is_ok_and(|b| b) &&
-       std::fs::exists(dirs::pin_wrapped_local_secret_file()).is_ok_and(|b| b)
-       ;
+   let state_exists = std::fs::exists(dirs::pin_state_file()).is_ok_and(|b| b);
 
    let enabled_msg = format!("Pin enabled: {}", state_exists);
 
@@ -59,9 +33,7 @@ pub fn status() -> anyhow::Result<()> {
    }
    let parts = [ enabled_msg, backend_msg];
    let msg = parts.join("\n");
-   println!(
-       "{msg}"
-   );
+   println!("{msg}");
    Ok(())
 }
 
@@ -78,24 +50,31 @@ pub fn unlock_with_pin(pin: Option<&Password>, pin_state: PinState, config: Conf
     ) = pin_state.unpack()
         .map_err(|_| error::Error::PinError {message: "Couldn't deserialize pin state".into()})?;
 
-    let local_secret = backend.retrieve_local_secret(&config)
-        .map_err(|_| error::Error::PinError {message: "Couldn't retrieve local secret".into()})?;
+    let pin_config = config.pin_config
+        .ok_or_else(|| Error::PinError {message: "pin config not set".to_string()})?;
+    let local_secret = backend.retrieve_local_secret(&pin_config)
+        .map_err(|_| Error::PinError {message: "Couldn't retrieve local secret".into()})?;
 
     let kek = pin::crypto::derive_kek_from_pin(pin, &local_secret, &salt, &kdf_params)?;
 
     let (keys, org_keys) = pin::crypto::unwrap_dek(&kek, &wrapped_key, &wrapped_org_keys)
-        .map_err(|_| error::Error::IncorrectPassword {message: "Incorrect PIN".into()})?;
+        .map_err(|_| Error::IncorrectPassword {message: "Incorrect PIN".into()})?;
 
     Ok((keys, org_keys))
 }
 
 
-// TODO evaluate whether it is worth it to make this async
 pub fn register(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Password>, config: &Config, backend: Backend) -> anyhow::Result<()> {
 
-    let local_secret = generate_local_secret();
 
-    backend.store_local_secret(&local_secret, &config)?;
+    let pin_config = config.pin_config
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Pin Config not set"))?;
+
+    pin_config.enable_pin.then_some(()).ok_or(anyhow::anyhow!("enable_pin not set in config"))?;
+
+    let local_secret = generate_local_secret(OsRng);
+    backend.store_local_secret(&local_secret, &pin_config)?;
 
     let default_kdf_params = Argon2Params::new();
     let kdf_params = if let Some(pin_config) = config.pin_config.as_ref() {
@@ -126,7 +105,7 @@ pub fn register(keys: &Keys, org_keys: &HashMap<String, Keys>, pin: Option<&Pass
 pub fn clear() -> anyhow::Result<()> {
 
     // Try to clear the secret if we can read the state.
-    if let Ok(state) = PinState::read_from_file(dirs::pin_state_file())
+    if let Ok(state) = load_pin_state()
         .context("reading pin state file")
     {
         state.backend
@@ -143,31 +122,21 @@ pub fn clear() -> anyhow::Result<()> {
 }
 
 pub fn empty_pin() -> bool {
-    PinState::read_from_file(dirs::pin_state_file())
+    load_pin_state()
         .map(|s| s.empty_pin)
         .unwrap_or(false)
 }
 
 // simply generate 32 bytes
-fn generate_local_secret() -> Vec {
+fn generate_local_secret<T: RngCore + CryptoRng>(mut rng: T) -> Vec {
     let mut buf = Vec::new();
     buf.extend(std::iter::repeat_n(0, 32));
-    rand::thread_rng().fill_bytes(buf.data_mut());
+    rng.fill_bytes(buf.data_mut());
     buf
 }
 
-fn load_pin_state() -> anyhow::Result<PinState> {
+pub fn load_pin_state() -> anyhow::Result<PinState> {
     let pin_state = PinState::read_from_file(dirs::pin_state_file())?;
 
     Ok(pin_state)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn setup() {
-
-    }
 }

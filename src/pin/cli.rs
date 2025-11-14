@@ -11,10 +11,10 @@ pub enum Pin {
         )]
         /// Whether to allow using an empty pin.
         ///
-        /// Only recommended for a device and user input bound local secret (e.g yubikey, mac touchid)
-        /// The age backend with the plugins `yubikey, se`
+        /// Only recommended for a device and user input bound local secret
+        /// E.g Using age backend with the plugins `yubikey, se`
         empty_pin: bool,
-        #[arg(long, value_enum, help = "Backend to store local_secret")] // TODO this NEEDS to be an enum value
+        #[arg(long, value_enum, help = "Backend to store local_secret")]
         backend: crate::pin::backend::Backend,
     },
     #[command(about = "Clear the PIN")]

@@ -1,4 +1,8 @@
 #![cfg(feature = "pin")]
+
+mod age;
+mod keyring;
+
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -7,7 +11,10 @@ use anyhow::{anyhow, Context};
 use argon2::password_hash::SaltString;
 use serde::{Deserialize, Serialize};
 use crate::config::Config;
-use crate::pin::backend_age::{AgePinBackend};
+use crate::dirs;
+use crate::pin::backend::age::{AgeConfig, AgePinBackend};
+use crate::pin::backend::keyring::{KeyringConfig, KeyringPinBackend};
+use crate::pin::cli::Pin;
 use crate::pin::crypto::{Argon2Params, WrappedKey};
 
 #[derive(Serialize, Deserialize, clap::ValueEnum, Clone, Debug)]
@@ -17,35 +24,51 @@ pub enum Backend {
     // Keyring(OsKeyringPinBackend)
 }
 
+impl BackendConfig for PinBackendConfig { }
+
+pub trait PinBackend {
+    type Config: BackendConfig;
+    fn retrieve_local_secret(&self, config: &Self::Config) -> anyhow::Result<crate::locked::Vec>;
+
+    fn store_local_secret(&self, kek: &crate::locked::Vec, config: &Self::Config) -> anyhow::Result<()>;
+
+    fn clear_local_secret(&self) -> anyhow::Result<()>;
+}
+
 impl PinBackend for Backend {
-    fn retrieve_local_secret(&self, config: &Config) -> anyhow::Result<crate::locked::Vec> {
+    type Config = PinBackendConfig;
+    fn retrieve_local_secret(&self, config: &PinBackendConfig) -> anyhow::Result<crate::locked::Vec> {
         match self {
-            Self::Age => AgePinBackend.retrieve_local_secret(config),
-            Self::OSKeyring => todo!()
+            Self::Age => {
+                let config = config.age.as_ref().ok_or(anyhow!("age config not set"))?;
+                AgePinBackend.retrieve_local_secret(&config)
+            }
+            Self::OSKeyring => {
+                let config = config.keyring.as_ref().ok_or(anyhow!("age config not set"))?;
+                KeyringPinBackend.retrieve_local_secret(&config)
+            }
         }
     }
 
-    fn store_local_secret(&self, kek: &crate::locked::Vec, config: &Config) -> anyhow::Result<()> {
+    fn store_local_secret(&self, kek: &crate::locked::Vec, config: &PinBackendConfig) -> anyhow::Result<()> {
         match self {
-            Self::Age => AgePinBackend.store_local_secret(kek, config),
-            Self::OSKeyring => todo!()
+            Self::Age => {
+                let config = config.age.as_ref().ok_or(anyhow!("age config not set"))?;
+                AgePinBackend.store_local_secret(kek, &config)
+            },
+            Self::OSKeyring => {
+                let config = config.keyring.as_ref().ok_or(anyhow!("keyring config not set"))?;
+                KeyringPinBackend.store_local_secret(kek, &config)
+            }
         }
     }
 
     fn clear_local_secret(&self) -> anyhow::Result<()> {
         match self {
             Self::Age => AgePinBackend.clear_local_secret(),
-            Self::OSKeyring => todo!()
+            Self::OSKeyring => KeyringPinBackend.clear_local_secret()
         }
     }
-}
-
-pub trait PinBackend {
-    fn retrieve_local_secret(&self, config: &Config) -> anyhow::Result<crate::locked::Vec>;
-
-    fn store_local_secret(&self, kek: &crate::locked::Vec, config: &Config) -> anyhow::Result<()>;
-
-    fn clear_local_secret(&self) -> anyhow::Result<()>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -53,21 +76,24 @@ pub struct PinBackendConfig {
     pub enable_pin: bool,
     #[serde(flatten)]
     pub kdf_params: Option<Argon2Params>,
-
-    // OsKeyring
-    pub local_secret_keyring_entry_name: Option<String>,
-
     // Age
-    pub age_identity_file_path: Option<PathBuf>,
+    #[serde(flatten)]
+    pub age: Option<AgeConfig>,
+    // OsKeyring
+    #[serde(flatten)]
+    pub keyring: Option<KeyringConfig>,
 }
+
+
+pub trait BackendConfig { }
 
 impl PinBackendConfig {
     pub fn new() -> Self {
         Self {
             enable_pin: false,
             kdf_params: Some(Argon2Params::new()),
-            local_secret_keyring_entry_name: None,
-            age_identity_file_path: None
+            age: Some(AgeConfig::new()),
+            keyring: None
         }
     }
 }
@@ -79,7 +105,7 @@ pub struct PinState {
     salt: String,
     kdf_params: Argon2Params,
     pub empty_pin: bool,
-    pub backend: crate::pin::backend::Backend
+    pub backend: Backend
 }
 
 impl PinState {
@@ -139,8 +165,5 @@ impl PinState {
         Ok(())
     }
 
-    // async pub fn write_to_file_async(&self) -> anyhow::Result<()> {
-    //
-    // }
 }
 

@@ -422,10 +422,10 @@ async fn unlock_state(
             };
 
             #[cfg(feature = "pin")]
-            if rbw::pin::flow::check_if_pin_available_async().await {
+            let pin_state_res = rbw::pin::flow::load_pin_state();
+            if pin_state_res.is_ok() {
 
-                let pin_state = rbw::pin::backend::PinState::read_from_file(rbw::dirs::pin_state_file())
-                    .context("failed to read the pin state file")?;
+                let pin_state = pin_state_res?;
                 let pin = if pin_state.empty_pin { None } else {
                     let inputted_pin = rbw::pinentry::getpin(
                         &config_pinentry().await?,
@@ -570,7 +570,6 @@ pub async fn sync(
     } else {
         return Err(anyhow::anyhow!("failed to find refresh token in db"));
     };
-    // TODO PIN do we update the protected key?? Or maybe we just accept that with syncing the PIN doesn't apply
     let (
         access_token,
         (protected_key, protected_private_key, protected_org_keys, entries),
@@ -598,7 +597,6 @@ pub async fn sync(
     Ok(())
 }
 
-// TODO PIN this is the unlock flow
 async fn decrypt_cipher(
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
     environment: &rbw::protocol::Environment,

@@ -1,6 +1,6 @@
 [package]
 name = "rbw"
-version = "1.14.1"
+version = "1.14.1-dev"
 authors = ["Jesse Luehrs <doy@tozt.net>"]
 edition = "2021"
 rust-version = "1.82.0"
@@ -88,6 +88,7 @@ arboard = { version = "3.5", default-features = false, features = [
 ], optional = true }
 chacha20poly1305 = {  version = "0.10.1", optional = true }
 age = {  version = "0.11.1", features = ["armor", "plugin"], optional = true }
+keyring = { version = "3.6.3", features = ["apple-native"] }
 
 [features]
 default = ["clipboard", "pin"] # TODO turn off by default

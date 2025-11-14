@@ -1,8 +1,6 @@
 use sha2::Digest as _;
 
 pub struct State {
-    // TODO do I need to modify this for pin unlock?
-    // I don't think so... just need to think about syncing
     pub priv_key: Option<rbw::locked::Keys>,
     pub org_keys:
         Option<std::collections::HashMap<String, rbw::locked::Keys>>,
@@ -28,6 +26,10 @@ pub struct State {
 
     #[cfg(feature = "clipboard")]
     pub clipboard: Option<arboard::Clipboard>,
+
+    // #[cfg(feature = "pin")]
+    // TODO(antotocar34) keep a hash of the priv_keys + org_keys here?
+    // Idea: If you rotate in new keys, rbw can tell you and flush the pin cache
 }
 
 impl State {
