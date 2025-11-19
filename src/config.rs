@@ -23,7 +23,7 @@ pub struct Config {
     #[serde(skip_serializing)]
     pub device_id: Option<String>,
     #[cfg(feature = "pin")]
-    #[serde(flatten)]
+    #[serde(flatten)] // TODO add 'deny_unknown_fields', but not compatible with 'flatten'
     pub pin_config: Option<crate::pin::backend::PinBackendConfig>
 }
 

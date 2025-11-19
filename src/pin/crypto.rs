@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use chacha20poly1305::{
     aead::{AeadCore, Buffer, KeyInit},
-    AeadInPlace, ChaCha20Poly1305, Nonce,
+    AeadInPlace, XChaCha20Poly1305, XNonce,
 };
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +28,7 @@ pub struct WrappedKey {
     #[serde(with = "base64")]
     wrapped_keys: Vec<u8>,
     #[serde(with = "base64")]
-    nonce: [u8; 12],
+    nonce: [u8; 24],
     // Bind the key to the correct profile
     context: String,
 }
@@ -37,14 +37,14 @@ impl WrappedKey {
     pub fn bytes(&self) -> &[u8] {
         self.wrapped_keys.as_slice()
     }
-    pub fn new(wrapped_keys: Vec<u8>, nonce: Nonce, context: String) -> Self {
+    pub fn new(wrapped_keys: Vec<u8>, nonce: XNonce, context: String) -> Self {
         Self {
             wrapped_keys,
-            nonce: (*nonce.as_slice()).try_into().unwrap(), // Nonce is effectively defined to be a [u8; 12]
+            nonce: (*nonce.as_slice()).try_into().expect("XNonce is defined to be 24 bytes"),
             context,
         }
     }
-    fn nonce(&self) -> Nonce {
+    fn nonce(&self) -> XNonce {
         (self.nonce).into()
     }
 }
@@ -113,11 +113,11 @@ pub fn derive_kek_from_pin(
 }
 
 fn wrap_single_key(
-    cipher: &ChaCha20Poly1305,
+    cipher: &XChaCha20Poly1305,
     keys: &Keys,
     context: &String,
 ) -> Result<WrappedKey> {
-    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng); // 96-bits; unique per message
+    let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng); // 96-bits; unique per message
 
     let ciphertext = {
         let mut buf = LockedVec::new();
@@ -141,7 +141,7 @@ pub fn wrap_dek<S: ::std::hash::BuildHasher>(
     org_keys: &HashMap<String, Keys, S>,
 ) -> Result<(WrappedKey, HashMap<String, WrappedKey>)> {
     let cipher =
-        ChaCha20Poly1305::new_from_slice(pin_key.data()).map_err(|_| {
+        XChaCha20Poly1305::new_from_slice(pin_key.data()).map_err(|_| {
             Error::PinError {
                 message: "Kek has invalid length".to_string(),
             }
@@ -192,7 +192,7 @@ impl Buffer for LockedVec {
 }
 
 fn unwrap_single_key(
-    cipher: &ChaCha20Poly1305,
+    cipher: &XChaCha20Poly1305,
     wrapped_keys: &WrappedKey,
 ) -> Result<Keys> {
     let mut key = LockedVec::new();
@@ -215,7 +215,7 @@ pub fn unwrap_dek<S: ::std::hash::BuildHasher>(
     wrapped_keys: &WrappedKey,
     wrapped_org_keys: &HashMap<String, WrappedKey, S>,
 ) -> Result<(Keys, HashMap<String, Keys>)> {
-    let cipher = ChaCha20Poly1305::new_from_slice(pin_key.data()).map_err(
+    let cipher = XChaCha20Poly1305::new_from_slice(pin_key.data()).map_err(
         |_| Error::PinError {
             message:
                 "invalid keylen; couldn't initialize chacha20poly1305 cipher"
