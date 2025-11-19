@@ -36,7 +36,6 @@ pub fn status() -> anyhow::Result<()> {
     Ok(())
 }
 
-// Meaning for return something else for an unrecoverable error
 pub fn unlock_with_pin(
     pin: Option<&Password>,
     pin_state: &PinState,
@@ -44,16 +43,16 @@ pub fn unlock_with_pin(
 ) -> error::Result<(Keys, HashMap<String, Keys>)> {
     let (wrapped_key, wrapped_org_keys, salt, kdf_params, _, backend) =
         pin_state.unpack().map_err(|_| error::Error::PinError {
-            message: "Couldn't deserialize pin state".into(),
+            message: "couldn't deserialize pin state".into(),
         })?;
 
     let pin_config = config.pin_config.ok_or_else(|| Error::PinError {
         message: "pin config not set".to_string(),
     })?;
     let local_secret =
-        backend.retrieve_local_secret(&pin_config).map_err(|_| {
+        backend.retrieve_local_secret(&pin_config).map_err(|e| {
             Error::PinError {
-                message: "Couldn't retrieve local secret".into(),
+                message: format!("couldn't retrieve local secret: {}", e).into(),
             }
         })?;
 
@@ -65,10 +64,7 @@ pub fn unlock_with_pin(
     )?;
 
     let (keys, org_keys) =
-        pin::crypto::unwrap_dek(&kek, &wrapped_key, &wrapped_org_keys)
-            .map_err(|_| Error::IncorrectPassword {
-                message: "Incorrect PIN".into(),
-            })?;
+        pin::crypto::unwrap_dek(&kek, &wrapped_key, &wrapped_org_keys)?;
 
     Ok((keys, org_keys))
 }

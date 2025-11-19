@@ -135,7 +135,6 @@ fn wrap_single_key(
 
     Ok(WrappedKey::new(ciphertext, nonce, context.to_owned()))
 }
-// Given the pin and the local_secret (age / keyring) encrypt the dek
 pub fn wrap_dek<S: ::std::hash::BuildHasher>(
     pin_key: &LockedVec,
     keys: &Keys,
@@ -205,8 +204,8 @@ fn unwrap_single_key(
             wrapped_keys.context.as_bytes(),
             &mut key,
         )
-        .map_err(|_| Error::PinError {
-            message: "Decryption error".to_string(),
+        .map_err(|_| Error::IncorrectPassword {
+            message: "incorrect pin".to_string(),
         })?;
 
     Ok(Keys::new(key))

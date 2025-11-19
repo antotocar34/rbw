@@ -444,7 +444,7 @@ async fn unlock_state(
                     Some(inputted_pin)
                 };
 
-                let config = Config::load()?;
+                let config = Config::load_async().await?;
                 let (keys, org_keys) = match rbw::pin::flow::unlock_with_pin(pin.as_ref(), &pin_state, config) {
                     Ok(keys) => keys,
                     Err(error::Error::IncorrectPassword {message}) => {
@@ -454,7 +454,9 @@ async fn unlock_state(
                         err_msg = Some(message);
                         continue 'attempts
                     }
-                    Err(e) => return Err(e).context("Unknown error")
+                    Err(error::Error::PinError {message: m}) => return Err(anyhow::anyhow!("pin error: {}", m)),
+                    Err(e) => return Err(e).context("unknown error")
+
                 };
                 unlock_success(state.clone(), keys, org_keys).await?;
                 return Ok(())

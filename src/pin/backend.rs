@@ -17,7 +17,7 @@ use std::path::PathBuf;
 #[derive(Serialize, Deserialize, clap::ValueEnum, Clone, Debug)]
 pub enum Backend {
     Age,
-    OSKeyring, // Keyring(OsKeyringPinBackend)
+    OSKeyring,
 }
 
 impl BackendConfig for PinBackendConfig {}

@@ -60,13 +60,13 @@ impl PinBackend for AgePinBackend {
     ) -> anyhow::Result<Vec> {
         let age_file_path = dirs::pin_age_wrapped_local_secret_file();
 
-        let identity = age_identity(config)?;
+        let identity = age_identity(config).context("could not parse age identity")?;
 
         let identity_plugin = plugin::IdentityPluginV1::new(
             identity.plugin(),
             std::slice::from_ref(&identity),
             age::NoCallbacks
-        ).context(format!("Could not construct age plugin identity. Is age-plugin-{} in your $PATH?", &identity.plugin()))?;
+        ).context(format!("could not construct age plugin identity. Is age-plugin-{} in your $PATH?", &identity.plugin()))?;
 
         let reader = BufReader::new(File::open(age_file_path)?);
         let decryptor = Decryptor::new(reader)?;
@@ -106,7 +106,7 @@ impl PinBackend for AgePinBackend {
                 .write(true)
                 .mode(0o600)
                 .create(true)
-                .truncate(true) // TODO if encrypting fails then this might not be a good idea :/
+                .truncate(true) // TODO if encryption fails then this might not be a good idea :/
                 .open(encrypted_age_path)?;
             file
         };
@@ -135,10 +135,11 @@ fn age_identity(
 ) -> anyhow::Result<plugin::Identity> {
     let age_identity = fs::read_to_string(&config.identity_file_path)?;
 
-    // Remove '#' comments
+    // Remove '#' comments and empty newlines
     let cleaned_string: String = age_identity
         .lines()
         .filter(|s| !s.trim_start().starts_with('#'))
+        .filter(|s| !s.trim().eq(""))
         .map(str::trim)
         .collect::<std::vec::Vec<_>>()
         .join("\n");
@@ -148,7 +149,7 @@ fn age_identity(
         .parse::<plugin::Identity>()
         .map_err(|e| {
             anyhow::anyhow!(
-                "Could not the parse age-plugin-* identity: {}",
+                "could not the parse age-plugin-* identity: {}",
                 e
             )
         })?;
@@ -157,7 +158,7 @@ fn age_identity(
         .iter()
         .all(|&x| x != identity.plugin())
     {
-        anyhow::bail!("Plugin is not supported")
+        anyhow::bail!("plugin is not supported")
     }
 
     Ok(identity)
