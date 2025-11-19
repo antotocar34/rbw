@@ -1163,6 +1163,8 @@ pub fn register_pin(
     backend: rbw::pin::backend::Backend
 ) -> anyhow::Result<()> {
     ensure_agent()?;
+    crate::actions::login()?;
+    crate::actions::unlock()?;
     crate::actions::register_pin(empty_pin, backend)?;
     Ok(())
 }
