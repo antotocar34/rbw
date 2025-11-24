@@ -1,14 +1,9 @@
 #![cfg(feature = "pin")]
 /*
 This module implements cryptography operations relating to the PIN feature.
-Refer to the design document for an overview of the design of the feature
-
-
-
-
 */
 use crate::error::{Error, Result};
-use crate::locked::{Keys, Password, Vec as LockedVec};
+use crate::locked::{Keys, Password, Vec};
 use argon2::{
     password_hash::{rand_core::OsRng, SaltString},
     Argon2,
@@ -26,7 +21,7 @@ pub const KEK_LEN: usize = 32;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct WrappedKey {
     #[serde(with = "base64")]
-    wrapped_keys: Vec<u8>,
+    wrapped_keys: std::vec::Vec<u8>,
     #[serde(with = "base64")]
     nonce: [u8; 24],
     // Bind the key to the correct profile
@@ -37,7 +32,7 @@ impl WrappedKey {
     pub fn bytes(&self) -> &[u8] {
         self.wrapped_keys.as_slice()
     }
-    pub fn new(wrapped_keys: Vec<u8>, nonce: XNonce, context: String) -> Self {
+    pub fn new(wrapped_keys: std::vec::Vec<u8>, nonce: XNonce, context: String) -> Self {
         Self {
             wrapped_keys,
             nonce: (*nonce.as_slice()).try_into().expect("XNonce is defined to be 24 bytes"),
@@ -86,10 +81,10 @@ impl Default for Argon2Params {
 
 pub fn derive_kek_from_pin(
     pin: Option<&Password>,
-    local_secret: &LockedVec,
+    local_secret: &Vec,
     salt: &SaltString,
     kdf_params: &Argon2Params,
-) -> Result<LockedVec> {
+) -> Result<Vec> {
     let argon2_config = Argon2::new_with_secret(
         local_secret.data(),
         argon2::Algorithm::Argon2id,
@@ -98,7 +93,7 @@ pub fn derive_kek_from_pin(
     )
     .map_err(|_| Error::Argon2)?;
 
-    let mut pin_key = LockedVec::new();
+    let mut pin_key = Vec::new();
     pin_key.extend(std::iter::repeat_n(0, KEK_LEN));
 
     Argon2::hash_password_into(
@@ -120,7 +115,7 @@ fn wrap_single_key(
     let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng); // 96-bits; unique per message
 
     let ciphertext = {
-        let mut buf = LockedVec::new();
+        let mut buf = Vec::new();
         buf.extend(keys.enc_key().iter().copied());
         buf.extend(keys.mac_key().iter().copied());
 
@@ -136,7 +131,7 @@ fn wrap_single_key(
     Ok(WrappedKey::new(ciphertext, nonce, context.to_owned()))
 }
 pub fn wrap_dek<S: ::std::hash::BuildHasher>(
-    pin_key: &LockedVec,
+    pin_key: &Vec,
     keys: &Keys,
     org_keys: &HashMap<String, Keys, S>,
 ) -> Result<(WrappedKey, HashMap<String, WrappedKey>)> {
@@ -166,18 +161,18 @@ pub fn wrap_dek<S: ::std::hash::BuildHasher>(
 
 // Need to implement the below traits
 // in order to decrypt in place (to not have to allocate secret to an insecure buffer)
-impl AsRef<[u8]> for LockedVec {
+impl AsRef<[u8]> for Vec {
     fn as_ref(&self) -> &[u8] {
         self.data()
     }
 }
 
-impl AsMut<[u8]> for LockedVec {
+impl AsMut<[u8]> for Vec {
     fn as_mut(&mut self) -> &mut [u8] {
         self.data_mut()
     }
 }
-impl Buffer for LockedVec {
+impl Buffer for Vec {
     fn extend_from_slice(
         &mut self,
         other: &[u8],
@@ -195,7 +190,7 @@ fn unwrap_single_key(
     cipher: &XChaCha20Poly1305,
     wrapped_keys: &WrappedKey,
 ) -> Result<Keys> {
-    let mut key = LockedVec::new();
+    let mut key = Vec::new();
     key.extend(wrapped_keys.bytes().to_vec().into_iter());
 
     cipher
@@ -211,7 +206,7 @@ fn unwrap_single_key(
     Ok(Keys::new(key))
 }
 pub fn unwrap_dek<S: ::std::hash::BuildHasher>(
-    pin_key: &LockedVec,
+    pin_key: &Vec,
     wrapped_keys: &WrappedKey,
     wrapped_org_keys: &HashMap<String, WrappedKey, S>,
 ) -> Result<(Keys, HashMap<String, Keys>)> {
@@ -268,15 +263,15 @@ mod base64 {
 mod tests {
     use super::*;
 
-    fn create_vec(bytes: &[u8]) -> LockedVec {
-        let mut vec = LockedVec::new();
+    fn create_vec(bytes: &[u8]) -> Vec {
+        let mut vec = Vec::new();
         vec.extend(bytes.iter().copied());
         vec
     }
 
-    fn concat_key_bytes(a: &[u8], b: &[u8]) -> zeroize::Zeroizing<Vec<u8>> {
+    fn concat_key_bytes(a: &[u8], b: &[u8]) -> zeroize::Zeroizing<std::vec::Vec<u8>> {
         let mut out =
-            zeroize::Zeroizing::new(Vec::with_capacity(a.len() + b.len()));
+            zeroize::Zeroizing::new(std::vec::Vec::with_capacity(a.len() + b.len()));
         out.extend_from_slice(a);
         out.extend_from_slice(b);
         out

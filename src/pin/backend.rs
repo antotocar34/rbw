@@ -133,6 +133,7 @@ pub struct PinState {
     kdf_params: Argon2Params,
     pub empty_pin: bool,
     pub backend: Backend,
+    // TODO
 }
 
 impl PinState {
