@@ -1,8 +1,4 @@
 #![cfg(feature = "pin")]
-/*
-Here is the logic for the high level flow of accessing the master symmetric key with the pin
-*/
-
 use crate::config::Config;
 use crate::error::Error;
 use crate::locked::{Keys, Password, Vec};
@@ -42,7 +38,7 @@ pub fn unlock_with_pin(
     config: Config,
 ) -> error::Result<(Keys, HashMap<String, Keys>)> {
     let (wrapped_key, wrapped_org_keys, salt, kdf_params, _, backend) =
-        pin_state.unpack().map_err(|_| error::Error::PinError {
+        pin_state.unpack().map_err(|_| Error::PinError {
             message: "couldn't deserialize pin state".into(),
         })?;
 

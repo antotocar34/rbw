@@ -5,13 +5,12 @@ pub enum Pin {
     Set {
         #[arg(
             long,
-            default_value_t = false,
-            // help = "Whether to have an empty pin. Only recommended for a device bound local secret with user input (e.g hardware key, mac touchid)"
+            default_value_t = false
         )]
         /// Whether to allow using an empty pin.
         ///
-        /// Only recommended for a device and user input bound local secret
-        /// E.g Using age backend with the plugins `yubikey, se`
+        /// Only recommended for a device + user input bound local secret
+        /// e.g Using age backend with the plugins `yubikey, se`
         empty_pin: bool,
         #[arg(long, value_enum, help = "Backend to store local_secret")]
         backend: crate::pin::backend::Backend,

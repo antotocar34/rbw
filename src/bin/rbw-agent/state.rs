@@ -26,10 +26,6 @@ pub struct State {
 
     #[cfg(feature = "clipboard")]
     pub clipboard: Option<arboard::Clipboard>,
-
-    // #[cfg(feature = "pin")]
-    // TODO(antotocar34) keep a hash of the priv_keys + org_keys here?
-    // Idea: If you rotate in new keys, rbw can tell you and flush the pin cache
 }
 
 impl State {

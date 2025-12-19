@@ -132,8 +132,7 @@ pub struct PinState {
     salt: String,
     kdf_params: Argon2Params,
     pub empty_pin: bool,
-    pub backend: Backend,
-    // TODO
+    pub backend: Backend
 }
 
 impl PinState {

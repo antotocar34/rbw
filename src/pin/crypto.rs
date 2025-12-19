@@ -1,6 +1,26 @@
 #![cfg(feature = "pin")]
 /*
 This module implements cryptography operations relating to the PIN feature.
+
+PIN cryptography: derive a key-encryption key (KEK) from a user PIN and wrap/unwrap the
+per-profile data-encryption keys (DEKs).
+
+# Overview
+This module enables an optional low-entropy PIN to protect the locally-stored DEK material.
+A KEK is derived using Argon2id from:
+- the user PIN (may be absent),
+- a device-local secret (`local_secret`) mixed in as an Argon2 "secret",
+- a random salt,
+- and caller-supplied Argon2 parameters.
+
+The derived KEK (32 bytes) is then used with XChaCha20-Poly1305 to wrap (`encrypt_in_place`) the
+DEK bytes (concatenated `enc_key || mac_key`). The AEAD additional authenticated data (AAD) is
+a `context` string that binds the wrapped keys to the intended profile (and org, for org keys).
+
+# Threat model / security properties
+- Protects DEK material at rest against an attacker who reads storage but does not know the PIN.
+- The `local_secret` strengthens the construction by device-binding the KDF input. Offline
+  guessing is infeasible without this secret.
 */
 use crate::error::{Error, Result};
 use crate::locked::{Keys, Password, Vec};
@@ -112,7 +132,7 @@ fn wrap_single_key(
     keys: &Keys,
     context: &String,
 ) -> Result<WrappedKey> {
-    let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng); // 96-bits; unique per message
+    let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
 
     let ciphertext = {
         let mut buf = Vec::new();
@@ -205,6 +225,7 @@ fn unwrap_single_key(
 
     Ok(Keys::new(key))
 }
+
 pub fn unwrap_dek<S: ::std::hash::BuildHasher>(
     pin_key: &Vec,
     wrapped_keys: &WrappedKey,

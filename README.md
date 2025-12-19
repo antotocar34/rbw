@@ -150,6 +150,54 @@ export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/rbw/ssh-agent-socket"
 If you're using a profile, the socket will be located at
 `"XDG_RUNTIME_DIR/rbw-<profile>/ssh-agent-socket"`.
 
+
+### Quick Unlock (PIN)
+
+`rbw` supports unlocking the agent with a PIN, providing faster access to your vault without entering your full master password each time. The PIN protects your master keys at rest: an attacker who gains read access to your storage cannot decrypt your vault without both the PIN and a device-bound local secret. This device-binding prevents offline PIN guessing attacks.
+
+#### Setup
+
+First, enable PIN unlock in your configuration and choose a storage backend for the local secret:
+
+```sh
+rbw config set enable_pin true
+rbw pin set --backend <backend>
+```
+
+Available backends:
+- `age` - Encrypts the local secret using [age](https://github.com/FiloSottile/age) encryption with plugin-based identities. Only age plugins are supported (not regular age identities) to ensure hardware-binding of the local secret. Supported plugins:
+  - [`age-plugin-yubikey`](https://github.com/str4d/age-plugin-yubikey) - Uses YubiKey PIV
+  - [`age-plugin-tpm`](https://github.com/Foxboron/age-plugin-tpm) - Uses TPM 2.0
+  - [`age-plugin-se`](https://github.com/remko/age-plugin-se) - Uses macOS/iOS Secure Enclave
+
+  Requires setting the identity file path: `rbw config set age_identity_file_path /path/to/identity`
+
+- `os-keyring` - Stores the local secret in your OS's keyring
+
+#### Usage
+
+Once configured, you can unlock with your PIN:
+
+```sh
+rbw unlock  # Will prompt for PIN instead of master password
+```
+
+Other commands:
+```sh
+rbw pin status  # Check if PIN is enabled and which backend is in use
+rbw pin clear   # Disable PIN unlock and remove stored secrets
+```
+
+#### Advanced: Empty PIN with Hardware Tokens
+
+If using the `age` backend with a hardware-bound age plugin (e.g., YubiKey, Secure Enclave), you can use an empty PIN since the hardware provides the authentication:
+
+```sh
+rbw pin set --backend age --empty-pin
+```
+
+This allows unlocking with just the hardware token present, without entering any PIN.
+
 ## Related projects
 
 * [rofi-rbw](https://github.com/fdw/rofi-rbw): A rofi frontend for Bitwarden
