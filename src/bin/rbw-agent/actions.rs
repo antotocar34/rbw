@@ -95,7 +95,6 @@ pub async fn login(
         let email = config_email().await?;
 
         let mut err_msg = None;
-        let mut device_otp: Option<String> = None;
         'attempts: for i in 1_u8..=3 {
             let err = if i > 1 {
                 // this unwrap is safe because we only ever continue the loop
@@ -114,7 +113,7 @@ pub async fn login(
             )
             .await
             .context("failed to read password from pinentry")?;
-            match rbw::actions::login(&email, password.clone(), None, None, device_otp.as_deref())
+            match rbw::actions::login(&email, password.clone(), None, None, None)
                 .await
             {
                 Ok((
@@ -143,7 +142,8 @@ pub async fn login(
                     break 'attempts;
                 }
                 Err(rbw::error::Error::DeviceVerificationRequired) => {
-                    // Server sent OTP to user's email; prompt for it and retry.
+                    // Server sent OTP to user's email; prompt for it and
+                    // retry immediately with the same password.
                     let otp = rbw::pinentry::getpin(
                         &config_pinentry().await?,
                         "Device Verification",
@@ -157,9 +157,38 @@ pub async fn login(
                     let otp_str = std::str::from_utf8(otp.password())
                         .context("OTP was not valid UTF-8")?
                         .to_string();
-                    device_otp = Some(otp_str);
-                    err_msg = None;
-                    continue 'attempts;
+                    let (
+                        access_token,
+                        refresh_token,
+                        kdf,
+                        iterations,
+                        memory,
+                        parallelism,
+                        protected_key,
+                    ) = rbw::actions::login(
+                        &email,
+                        password.clone(),
+                        None,
+                        None,
+                        Some(&otp_str),
+                    )
+                    .await
+                    .context("failed to log in after device verification")?;
+                    login_success(
+                        state.clone(),
+                        access_token,
+                        refresh_token,
+                        kdf,
+                        iterations,
+                        memory,
+                        parallelism,
+                        protected_key,
+                        password,
+                        db,
+                        email,
+                    )
+                    .await?;
+                    break 'attempts;
                 }
                 Err(rbw::error::Error::TwoFactorRequired {
                     providers,
