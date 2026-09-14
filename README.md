@@ -31,7 +31,11 @@ will always build from the latest master commit.
 
 ### Debian/Ubuntu
 
-You can download a Debian package from
+`rbw` is officially packaged for Debian as
+[`rust-rbw`](https://tracker.debian.org/pkg/rust-rbw) and is available in
+testing (forky). You can install it using `sudo apt install rbw`.
+
+Alternatively, you can download a Debian package from
 [https://git.tozt.net/rbw/releases/deb/
 ](https://git.tozt.net/rbw/releases/deb/). The packages are signed by
 [`minisign`](https://github.com/jedisct1/minisign), and can be verified using
@@ -56,8 +60,7 @@ it out via `nix-shell -p rbw`.
 
 ### Alpine
 
-`rbw` is available in the [testing repository](https://pkgs.alpinelinux.org/packages?name=rbw).
-If you are not using the `edge` version of alpine you have to [enable the repository manually](https://wiki.alpinelinux.org/wiki/Repositories#Testing).
+`rbw` is available in the [community repository](https://pkgs.alpinelinux.org/packages?name=rbw). You can install it with `apk add rbw`.
 
 ### Other
 
@@ -198,9 +201,25 @@ rbw pin set --backend age --empty-pin
 
 This allows unlocking with just the hardware token present, without entering any PIN.
 
+### 2FA support
+
+`rbw` supports the following 2FA mechanisms :
+
+* Email
+* Authenticator App
+* Yubico OTP security key (https://support.yubico.com/hc/en-us/articles/360013712639-Testing-Yubico-OTP)
+
+WebAuthn / Passkey and Duo security are unsupported 2FA mechanisms.
+
+If you use only unsupported 2FA mechanism, you need to add a supported 2FA
+mechanism on your bitwarden account to use rbw. It allows you to use rbw
+with a supported mechanism, and use other clients with you preferred
+2FA mechanism.
+
 ## Related projects
 
 * [rofi-rbw](https://github.com/fdw/rofi-rbw): A rofi frontend for Bitwarden
 * [bw-ssh](https://framagit.org/Glandos/bw-ssh/): Manage SSH key passphrases in Bitwarden
 * [rbw-menu](https://github.com/rbuchberger/rbw-menu): Tiny menu picker for rbw
 * [ulauncher-rbw](https://0xacab.org/varac-projects/ulauncher-rbw): [Ulauncher](https://ulauncher.io/) rbw extension
+* [fuzzel-rbw](https://github.com/sammhansen/fuzzel-rbw): A fuzzel frontend for Bitwarden

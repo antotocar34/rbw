@@ -4,7 +4,7 @@
 
 use crate::prelude::*;
 
-use rand::Rng as _;
+use rand::distr::SampleString as _;
 use sha2::Digest as _;
 use tokio::io::AsyncReadExt as _;
 
@@ -1098,17 +1098,10 @@ impl Client {
         &self,
         sso_id: &str,
     ) -> Result<(String, String, String)> {
-        let state: String = rand::thread_rng()
-            .sample_iter(&rand::distributions::Alphanumeric)
-            .take(64)
-            .map(char::from)
-            .collect();
-
-        let sso_code_verifier: String = rand::thread_rng()
-            .sample_iter(&rand::distributions::Alphanumeric)
-            .take(64)
-            .map(char::from)
-            .collect();
+        let state =
+            rand::distr::Alphanumeric.sample_string(&mut rand::rng(), 64);
+        let sso_code_verifier =
+            rand::distr::Alphanumeric.sample_string(&mut rand::rng(), 64);
 
         let mut hasher = sha2::Sha256::new();
         hasher.update(sso_code_verifier.clone());
@@ -1149,7 +1142,7 @@ impl Client {
 
         let sso_code = callback_server.await?;
 
-        Ok((sso_code, sso_code_verifier, callback_url.to_string()))
+        Ok((sso_code, sso_code_verifier, callback_url))
     }
 
     pub async fn sync(
@@ -1232,7 +1225,7 @@ impl Client {
                     Some(
                         uris.iter()
                             .map(|s| CipherLoginUri {
-                                uri: Some(s.uri.to_string()),
+                                uri: Some(s.uri.clone()),
                                 match_type: s.match_type,
                             })
                             .collect(),
@@ -1382,7 +1375,7 @@ impl Client {
                     Some(
                         uris.iter()
                             .map(|s| CipherLoginUri {
-                                uri: Some(s.uri.to_string()),
+                                uri: Some(s.uri.clone()),
                                 match_type: s.match_type,
                             })
                             .collect(),
@@ -1711,7 +1704,7 @@ fn sso_query_code(
         });
     }
 
-    Ok(sso_code.to_string())
+    Ok(sso_code.clone())
 }
 
 fn classify_login_error(error_res: &ConnectErrorRes, code: u16) -> Error {

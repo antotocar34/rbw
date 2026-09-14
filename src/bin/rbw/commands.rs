@@ -48,18 +48,153 @@ pub fn parse_needle(arg: &str) -> Result<Needle, std::convert::Infallible> {
     Ok(Needle::Name(arg.to_string()))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Field {
+    Notes,
+    Username,
+    Password,
+    Totp,
+    Uris,
+    IdentityName,
+    City,
+    State,
+    PostalCode,
+    Country,
+    Phone,
+    Ssn,
+    License,
+    Passport,
+    CardNumber,
+    Expiration,
+    ExpMonth,
+    ExpYear,
+    Cvv,
+    Cardholder,
+    Brand,
+    Name,
+    Email,
+    Address,
+    Address1,
+    Address2,
+    Address3,
+    Fingerprint,
+    PublicKey,
+    PrivateKey,
+    Title,
+    FirstName,
+    MiddleName,
+    LastName,
+}
+
+impl std::str::FromStr for Field {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
+            "notes" | "note" => Self::Notes,
+            "username" | "user" => Self::Username,
+            "password" => Self::Password,
+            "totp" | "code" => Self::Totp,
+            "uris" | "urls" | "sites" => Self::Uris,
+            "identityname" => Self::IdentityName,
+            "city" => Self::City,
+            "state" => Self::State,
+            "postcode" | "zipcode" | "zip" => Self::PostalCode,
+            "country" => Self::Country,
+            "phone" => Self::Phone,
+            "ssn" => Self::Ssn,
+            "license" => Self::License,
+            "passport" => Self::Passport,
+            "number" | "card" => Self::CardNumber,
+            "exp" => Self::Expiration,
+            "exp_month" | "month" => Self::ExpMonth,
+            "exp_year" | "year" => Self::ExpYear,
+            // the word "code" got preceeded by Totp
+            "cvv" => Self::Cvv,
+            "cardholder" | "cardholder_name" => Self::Cardholder,
+            "brand" | "type" => Self::Brand,
+            "name" => Self::Name,
+            "email" => Self::Email,
+            "address1" => Self::Address1,
+            "address2" => Self::Address2,
+            "address3" => Self::Address3,
+            "address" => Self::Address,
+            "fingerprint" => Self::Fingerprint,
+            "public_key" => Self::PublicKey,
+            "private_key" => Self::PrivateKey,
+            "title" => Self::Title,
+            "first_name" => Self::FirstName,
+            "middle_name" => Self::MiddleName,
+            "last_name" => Self::LastName,
+            _ => anyhow::bail!("unknown field {s}"),
+        })
+    }
+}
+
+impl Field {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Notes => "notes",
+            Self::Username => "username",
+            Self::Password => "password",
+            Self::Totp => "totp",
+            Self::Uris => "uris",
+            Self::IdentityName => "identityname",
+            Self::City => "city",
+            Self::State => "state",
+            Self::PostalCode => "postcode",
+            Self::Country => "country",
+            Self::Phone => "phone",
+            Self::Ssn => "ssn",
+            Self::License => "license",
+            Self::Passport => "passport",
+            Self::CardNumber => "number",
+            Self::Expiration => "exp",
+            Self::ExpMonth => "exp_month",
+            Self::ExpYear => "exp_year",
+            Self::Cvv => "cvv",
+            Self::Cardholder => "cardholder",
+            Self::Brand => "brand",
+            Self::Name => "name",
+            Self::Email => "email",
+            Self::Address1 => "address1",
+            Self::Address2 => "address2",
+            Self::Address3 => "address3",
+            Self::Address => "address",
+            Self::Fingerprint => "fingerprint",
+            Self::PublicKey => "public_key",
+            Self::PrivateKey => "private_key",
+            Self::Title => "title",
+            Self::FirstName => "first_name",
+            Self::MiddleName => "middle_name",
+            Self::LastName => "last_name",
+        }
+    }
+}
+
+impl std::fmt::Display for Field {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, serde::Serialize)]
 struct DecryptedListCipher {
     id: String,
     name: Option<String>,
     user: Option<String>,
     folder: Option<String>,
+    uris: Option<Vec<String>>,
+    #[serde(rename = "type")]
+    entry_type: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[cfg_attr(test, derive(Eq, PartialEq))]
 struct DecryptedSearchCipher {
     id: String,
+    #[serde(rename = "type")]
+    entry_type: String,
     folder: Option<String>,
     name: String,
     user: Option<String>,
@@ -191,9 +326,11 @@ impl From<DecryptedSearchCipher> for DecryptedListCipher {
     fn from(value: DecryptedSearchCipher) -> Self {
         Self {
             id: value.id,
+            entry_type: Some(value.entry_type),
             name: Some(value.name),
             user: value.user,
             folder: value.folder,
+            uris: Some(value.uris.into_iter().map(|(s, _)| s).collect()),
         }
     }
 }
@@ -280,18 +417,18 @@ impl DecryptedCipher {
                 totp,
                 uris,
                 ..
-            } => match field {
-                "notes" => {
+            } => match field.parse() {
+                Ok(Field::Notes) => {
                     if let Some(notes) = &self.notes {
                         val_display_or_store(clipboard, notes);
                     }
                 }
-                "username" | "user" => {
+                Ok(Field::Username) => {
                     if let Some(username) = &username {
                         val_display_or_store(clipboard, username);
                     }
                 }
-                "totp" | "code" => {
+                Ok(Field::Totp) => {
                     if let Some(totp) = totp {
                         match generate_totp(totp) {
                             Ok(code) => {
@@ -303,16 +440,14 @@ impl DecryptedCipher {
                         }
                     }
                 }
-                "uris" | "urls" | "sites" => {
+                Ok(Field::Uris) => {
                     if let Some(uris) = uris {
-                        let uri_strs: Vec<_> = uris
-                            .iter()
-                            .map(|uri| uri.uri.to_string())
-                            .collect();
+                        let uri_strs: Vec<_> =
+                            uris.iter().map(|uri| uri.uri.clone()).collect();
                         val_display_or_store(clipboard, &uri_strs.join("\n"));
                     }
                 }
-                "password" => {
+                Ok(Field::Password) => {
                     self.display_short(desc, clipboard);
                 }
                 _ => {
@@ -336,11 +471,11 @@ impl DecryptedCipher {
                 exp_year,
                 code,
                 ..
-            } => match field {
-                "number" | "card" => {
+            } => match field.parse() {
+                Ok(Field::CardNumber) => {
                     self.display_short(desc, clipboard);
                 }
-                "exp" => {
+                Ok(Field::Expiration) => {
                     if let (Some(month), Some(year)) = (exp_month, exp_year) {
                         val_display_or_store(
                             clipboard,
@@ -348,32 +483,32 @@ impl DecryptedCipher {
                         );
                     }
                 }
-                "exp_month" | "month" => {
+                Ok(Field::ExpMonth) => {
                     if let Some(exp_month) = exp_month {
                         val_display_or_store(clipboard, exp_month);
                     }
                 }
-                "exp_year" | "year" => {
+                Ok(Field::ExpYear) => {
                     if let Some(exp_year) = exp_year {
                         val_display_or_store(clipboard, exp_year);
                     }
                 }
-                "cvv" => {
+                Ok(Field::Cvv) => {
                     if let Some(code) = code {
                         val_display_or_store(clipboard, code);
                     }
                 }
-                "name" | "cardholder" => {
+                Ok(Field::Name | Field::Cardholder) => {
                     if let Some(cardholder_name) = cardholder_name {
                         val_display_or_store(clipboard, cardholder_name);
                     }
                 }
-                "brand" | "type" => {
+                Ok(Field::Brand) => {
                     if let Some(brand) = brand {
                         val_display_or_store(clipboard, brand);
                     }
                 }
-                "notes" => {
+                Ok(Field::Notes) => {
                     if let Some(notes) = &self.notes {
                         val_display_or_store(clipboard, notes);
                     }
@@ -407,16 +542,16 @@ impl DecryptedCipher {
                 passport_number,
                 username,
                 ..
-            } => match field {
-                "name" => {
+            } => match field.parse() {
+                Ok(Field::Name) => {
                     self.display_short(desc, clipboard);
                 }
-                "email" => {
+                Ok(Field::Email) => {
                     if let Some(email) = email {
                         val_display_or_store(clipboard, email);
                     }
                 }
-                "address" => {
+                Ok(Field::Address) => {
                     let mut strs = vec![];
                     if let Some(address1) = address1 {
                         strs.push(address1.clone());
@@ -431,52 +566,52 @@ impl DecryptedCipher {
                         val_display_or_store(clipboard, &strs.join("\n"));
                     }
                 }
-                "city" => {
+                Ok(Field::City) => {
                     if let Some(city) = city {
                         val_display_or_store(clipboard, city);
                     }
                 }
-                "state" => {
+                Ok(Field::State) => {
                     if let Some(state) = state {
                         val_display_or_store(clipboard, state);
                     }
                 }
-                "postcode" | "zipcode" | "zip" => {
+                Ok(Field::PostalCode) => {
                     if let Some(postal_code) = postal_code {
                         val_display_or_store(clipboard, postal_code);
                     }
                 }
-                "country" => {
+                Ok(Field::Country) => {
                     if let Some(country) = country {
                         val_display_or_store(clipboard, country);
                     }
                 }
-                "phone" => {
+                Ok(Field::Phone) => {
                     if let Some(phone) = phone {
                         val_display_or_store(clipboard, phone);
                     }
                 }
-                "ssn" => {
+                Ok(Field::Ssn) => {
                     if let Some(ssn) = ssn {
                         val_display_or_store(clipboard, ssn);
                     }
                 }
-                "license" => {
+                Ok(Field::License) => {
                     if let Some(license_number) = license_number {
                         val_display_or_store(clipboard, license_number);
                     }
                 }
-                "passport" => {
+                Ok(Field::Passport) => {
                     if let Some(passport_number) = passport_number {
                         val_display_or_store(clipboard, passport_number);
                     }
                 }
-                "username" => {
+                Ok(Field::Username) => {
                     if let Some(username) = username {
                         val_display_or_store(clipboard, username);
                     }
                 }
-                "notes" => {
+                Ok(Field::Notes) => {
                     if let Some(notes) = &self.notes {
                         val_display_or_store(clipboard, notes);
                     }
@@ -495,8 +630,8 @@ impl DecryptedCipher {
                     }
                 }
             },
-            DecryptedData::SecureNote => match field {
-                "note" | "notes" => {
+            DecryptedData::SecureNote => match field.parse() {
+                Ok(Field::Notes) => {
                     self.display_short(desc, clipboard);
                 }
                 _ => {
@@ -513,16 +648,25 @@ impl DecryptedCipher {
                     }
                 }
             },
-            DecryptedData::SshKey { fingerprint, .. } => match field {
-                "fingerprint" => {
+            DecryptedData::SshKey {
+                fingerprint,
+                private_key,
+                ..
+            } => match field.parse() {
+                Ok(Field::Fingerprint) => {
                     if let Some(fingerprint) = fingerprint {
                         val_display_or_store(clipboard, fingerprint);
                     }
                 }
-                "public_key" => {
+                Ok(Field::PublicKey) => {
                     self.display_short(desc, clipboard);
                 }
-                "notes" => {
+                Ok(Field::PrivateKey) => {
+                    if let Some(private_key) = private_key {
+                        val_display_or_store(clipboard, private_key);
+                    }
+                }
+                Ok(Field::Notes) => {
                     if let Some(notes) = &self.notes {
                         val_display_or_store(clipboard, notes);
                     }
@@ -595,8 +739,9 @@ impl DecryptedCipher {
                 code,
                 ..
             } => {
-                let mut displayed = self.display_short(desc, clipboard);
+                let mut displayed = false;
 
+                displayed |= self.display_short(desc, clipboard);
                 if let (Some(exp_month), Some(exp_year)) =
                     (exp_month, exp_year)
                 {
@@ -708,6 +853,147 @@ impl DecryptedCipher {
         }
     }
 
+    /// This implementation mirror the `fn display_fied` method on which field to list
+    fn display_fields_list(&self) {
+        match &self.data {
+            DecryptedData::Login {
+                username,
+                password,
+                totp,
+                uris,
+                ..
+            } => {
+                if username.is_some() {
+                    println!("{}", Field::Username);
+                }
+                if totp.is_some() {
+                    println!("{}", Field::Totp);
+                }
+                if uris.is_some() {
+                    println!("{}", Field::Uris);
+                }
+                if password.is_some() {
+                    println!("{}", Field::Password);
+                }
+            }
+            DecryptedData::Card {
+                cardholder_name,
+                number,
+                brand,
+                exp_month,
+                exp_year,
+                code,
+                ..
+            } => {
+                if number.is_some() {
+                    println!("{}", Field::CardNumber);
+                }
+                if exp_month.is_some() {
+                    println!("{}", Field::ExpMonth);
+                }
+                if exp_year.is_some() {
+                    println!("{}", Field::ExpYear);
+                }
+                if code.is_some() {
+                    println!("{}", Field::Cvv);
+                }
+                if cardholder_name.is_some() {
+                    println!("{}", Field::Cardholder);
+                }
+                if brand.is_some() {
+                    println!("{}", Field::Brand);
+                }
+            }
+
+            DecryptedData::Identity {
+                address1,
+                address2,
+                address3,
+                city,
+                state,
+                postal_code,
+                country,
+                phone,
+                email,
+                ssn,
+                license_number,
+                passport_number,
+                username,
+                title,
+                first_name,
+                middle_name,
+                last_name,
+                ..
+            } => {
+                if [title, first_name, middle_name, last_name]
+                    .iter()
+                    .any(|f| f.is_some())
+                {
+                    // the display_field combines all these fields together.
+                    println!("name");
+                }
+                if email.is_some() {
+                    println!("{}", Field::Email);
+                }
+                if [address1, address2, address3].iter().any(|f| f.is_some())
+                {
+                    // the display_field combines all these fields together.
+                    println!("address");
+                }
+                if city.is_some() {
+                    println!("{}", Field::City);
+                }
+                if state.is_some() {
+                    println!("{}", Field::State);
+                }
+                if postal_code.is_some() {
+                    println!("{}", Field::PostalCode);
+                }
+                if country.is_some() {
+                    println!("{}", Field::Country);
+                }
+                if phone.is_some() {
+                    println!("{}", Field::Phone);
+                }
+                if ssn.is_some() {
+                    println!("{}", Field::Ssn);
+                }
+                if license_number.is_some() {
+                    println!("{}", Field::License);
+                }
+                if passport_number.is_some() {
+                    println!("{}", Field::Passport);
+                }
+                if username.is_some() {
+                    println!("{}", Field::Username);
+                }
+            }
+
+            DecryptedData::SecureNote => (), // handled at the end
+            DecryptedData::SshKey {
+                fingerprint,
+                public_key,
+                ..
+            } => {
+                if fingerprint.is_some() {
+                    println!("{}", Field::Fingerprint);
+                }
+                if public_key.is_some() {
+                    println!("{}", Field::PublicKey);
+                }
+            }
+        }
+
+        if self.notes.is_some() {
+            println!("{}", Field::Notes);
+        }
+        for f in &self.fields {
+            if let Some(name) = &f.name {
+                println!("{name}");
+            }
+        }
+    }
+
     fn display_json(&self, desc: &str) -> anyhow::Result<()> {
         serde_json::to_writer_pretty(std::io::stdout(), &self)
             .context(format!("failed to write entry '{desc}' to stdout"))?;
@@ -773,9 +1059,7 @@ enum DecryptedData {
     SshKey {
         public_key: Option<String>,
         fingerprint: Option<String>,
-        // We exclude the decryption of of the private_key here deliberately.
-        // It shouldn't be necessary to display the private_key, because the
-        // agent can sign ssh challenges directly via the ssh agent protocol.
+        private_key: Option<String>,
     },
 }
 
@@ -900,11 +1184,20 @@ enum ListField {
     Name,
     User,
     Folder,
+    Uri,
+    EntryType,
 }
 
 impl ListField {
     fn all() -> Vec<Self> {
-        vec![Self::Id, Self::Name, Self::User, Self::Folder]
+        vec![
+            Self::Id,
+            Self::Name,
+            Self::User,
+            Self::Folder,
+            Self::Uri,
+            Self::EntryType,
+        ]
     }
 }
 
@@ -917,7 +1210,8 @@ impl std::convert::TryFrom<&String> for ListField {
             "id" => Self::Id,
             "user" => Self::User,
             "folder" => Self::Folder,
-            _ => return Err(anyhow::anyhow!("unknown field {}", s)),
+            "type" => Self::EntryType,
+            _ => return Err(anyhow::anyhow!("unknown field {s}")),
         })
     }
 }
@@ -1031,7 +1325,7 @@ pub fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
                 .context("can't parse input as u32")?;
         },
 
-        _ => return Err(anyhow::anyhow!("invalid config key: {}", key)),
+        _ => return Err(anyhow::anyhow!("invalid config key: {key}")),
     }
     config.save()?;
 
@@ -1114,7 +1408,7 @@ pub fn config_unset(key: &str) -> anyhow::Result<()> {
             }
         }
 
-        _ => return Err(anyhow::anyhow!("invalid config key: {}", key)),
+        _ => return Err(anyhow::anyhow!("invalid config key: {key}")),
     }
     config.save()?;
 
@@ -1170,7 +1464,9 @@ pub fn register_pin(
 }
 
 pub fn unlocked() -> anyhow::Result<()> {
-    // ensure_agent()?;
+    // not ensure_agent, because we don't want `rbw unlocked` to start the
+    // agent if it's not running
+    let _ = check_agent_version();
     crate::actions::unlocked()?;
 
     Ok(())
@@ -1219,6 +1515,7 @@ pub fn get(
     raw: bool,
     clipboard: bool,
     ignore_case: bool,
+    list_fields: bool,
 ) -> anyhow::Result<()> {
     unlock()?;
 
@@ -1233,7 +1530,9 @@ pub fn get(
     let (_, decrypted) =
         find_entry(&db, needle, user, folder, ignore_case)
             .with_context(|| format!("couldn't find entry for '{desc}'"))?;
-    if raw {
+    if list_fields {
+        decrypted.display_fields_list();
+    } else if raw {
         decrypted.display_json(&desc)?;
     } else if full {
         decrypted.display_long(&desc, clipboard);
@@ -1273,6 +1572,20 @@ fn print_entry_list(
                         String::new,
                         std::string::ToString::to_string,
                     ),
+                    ListField::Uri => {
+                        // "uri" is not listed in the TryFrom
+                        // implementation, so there's no way to try to
+                        // print it (and it's not clear what that would
+                        // look like, since it's a list and not a single
+                        // string)
+                        unreachable!()
+                    }
+                    ListField::EntryType => {
+                        entry.entry_type.as_ref().map_or_else(
+                            String::new,
+                            std::string::ToString::to_string,
+                        )
+                    }
                 })
                 .collect();
 
@@ -1765,30 +2078,15 @@ pub fn stop_agent() -> anyhow::Result<()> {
 
 fn ensure_agent() -> anyhow::Result<()> {
     check_config()?;
-
-    ensure_agent_once()?;
-    let client_version = rbw::protocol::version();
-    let agent_version = version_or_quit()?;
-    if agent_version != client_version {
-        log::debug!(
-            "client protocol version is {client_version} but agent protocol version is {agent_version}"
-        );
-        crate::actions::quit()?;
-        ensure_agent_once()?;
-        let agent_version = version_or_quit()?;
-        if agent_version != client_version {
-            crate::actions::quit()?;
-            return Err(anyhow::anyhow!(
-                "incompatible protocol versions: client ({}), agent ({})",
-                client_version,
-                agent_version
-            ));
-        }
+    if matches!(check_agent_version(), Ok(())) {
+        return Ok(());
     }
+    run_agent()?;
+    check_agent_version()?;
     Ok(())
 }
 
-fn ensure_agent_once() -> anyhow::Result<()> {
+fn run_agent() -> anyhow::Result<()> {
     let agent_path = std::env::var_os("RBW_AGENT");
     let agent_path = agent_path
         .as_deref()
@@ -1800,8 +2098,7 @@ fn ensure_agent_once() -> anyhow::Result<()> {
         if let Some(code) = status.code() {
             if code != 23 {
                 return Err(anyhow::anyhow!(
-                    "failed to run rbw-agent: {}",
-                    status
+                    "failed to run rbw-agent: {status}"
                 ));
             }
         }
@@ -1815,6 +2112,18 @@ fn check_config() -> anyhow::Result<()> {
         log::error!("{MISSING_CONFIG_HELP}");
         anyhow::Error::new(e)
     })
+}
+
+fn check_agent_version() -> anyhow::Result<()> {
+    let client_version = rbw::protocol::VERSION;
+    let agent_version = version_or_quit()?;
+    if agent_version != client_version {
+        crate::actions::quit()?;
+        return Err(anyhow::anyhow!(
+            "client protocol version is {client_version} but agent protocol version is {agent_version}"
+        ));
+    }
+    Ok(())
 }
 
 fn version_or_quit() -> anyhow::Result<u32> {
@@ -1912,12 +2221,12 @@ fn find_entry_raw(
             .map(|(_, decrypted)| decrypted.display_name())
             .collect();
         let entries = entries.join(", ");
-        Err(anyhow::anyhow!("multiple entries found: {}", entries))
+        Err(anyhow::anyhow!("multiple entries found: {entries}"))
     }
 }
 
 fn decrypt_field(
-    name: &str,
+    name: Field,
     field: Option<&str>,
     entry_key: Option<&str>,
     org_id: Option<&str>,
@@ -1952,7 +2261,7 @@ fn decrypt_list_cipher(
     let user = if fields.contains(&ListField::User) {
         match &entry.data {
             rbw::db::EntryData::Login { username, .. } => decrypt_field(
-                "username",
+                Field::Username,
                 username.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
@@ -1973,12 +2282,43 @@ fn decrypt_list_cipher(
     } else {
         None
     };
+    let uris = if fields.contains(&ListField::Uri) {
+        match &entry.data {
+            rbw::db::EntryData::Login { uris, .. } => Some(
+                uris.iter()
+                    .filter_map(|s| {
+                        decrypt_field(
+                            Field::Uris,
+                            Some(&s.uri),
+                            entry.key.as_deref(),
+                            entry.org_id.as_deref(),
+                        )
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let entry_type = fields
+        .contains(&ListField::EntryType)
+        .then_some(match &entry.data {
+            rbw::db::EntryData::Login { .. } => "Login",
+            rbw::db::EntryData::Identity { .. } => "Identity",
+            rbw::db::EntryData::SshKey { .. } => "SSH Key",
+            rbw::db::EntryData::SecureNote => "Note",
+            rbw::db::EntryData::Card { .. } => "Card",
+        })
+        .map(str::to_string);
 
     Ok(DecryptedListCipher {
         id,
         name,
         user,
         folder,
+        uris,
+        entry_type,
     })
 }
 
@@ -1993,7 +2333,7 @@ fn decrypt_search_cipher(
     )?;
     let user = match &entry.data {
         rbw::db::EntryData::Login { username, .. } => decrypt_field(
-            "username",
+            Field::Username,
             username.as_deref(),
             entry.key.as_deref(),
             entry.org_id.as_deref(),
@@ -2022,7 +2362,7 @@ fn decrypt_search_cipher(
         uris.iter()
             .filter_map(|s| {
                 decrypt_field(
-                    "uri",
+                    Field::Uris,
                     Some(&s.uri),
                     entry.key.as_deref(),
                     entry.org_id.as_deref(),
@@ -2036,7 +2376,13 @@ fn decrypt_search_cipher(
     let fields = entry
         .fields
         .iter()
-        .filter_map(|field| field.value.as_ref())
+        .filter_map(|field| {
+            if field.ty == Some(rbw::api::FieldType::Hidden) {
+                None
+            } else {
+                field.value.as_ref()
+            }
+        })
         .map(|value| {
             crate::actions::decrypt(
                 value,
@@ -2052,9 +2398,18 @@ fn decrypt_search_cipher(
             None
         }
     };
+    let entry_type = (match &entry.data {
+        rbw::db::EntryData::Login { .. } => "Login",
+        rbw::db::EntryData::Identity { .. } => "Identity",
+        rbw::db::EntryData::SshKey { .. } => "SSH Key",
+        rbw::db::EntryData::SecureNote => "Note",
+        rbw::db::EntryData::Card { .. } => "Card",
+    })
+    .to_string();
 
     Ok(DecryptedSearchCipher {
         id,
+        entry_type,
         folder,
         name,
         user,
@@ -2151,19 +2506,19 @@ fn decrypt_cipher(entry: &rbw::db::Entry) -> anyhow::Result<DecryptedCipher> {
             uris,
         } => DecryptedData::Login {
             username: decrypt_field(
-                "username",
+                Field::Username,
                 username.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             password: decrypt_field(
-                "password",
+                Field::Password,
                 password.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             totp: decrypt_field(
-                "totp",
+                Field::Totp,
                 totp.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
@@ -2172,7 +2527,7 @@ fn decrypt_cipher(entry: &rbw::db::Entry) -> anyhow::Result<DecryptedCipher> {
                 .iter()
                 .map(|s| {
                     decrypt_field(
-                        "uri",
+                        Field::Uris,
                         Some(&s.uri),
                         entry.key.as_deref(),
                         entry.org_id.as_deref(),
@@ -2193,37 +2548,37 @@ fn decrypt_cipher(entry: &rbw::db::Entry) -> anyhow::Result<DecryptedCipher> {
             code,
         } => DecryptedData::Card {
             cardholder_name: decrypt_field(
-                "cardholder_name",
+                Field::Cardholder,
                 cardholder_name.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             number: decrypt_field(
-                "number",
+                Field::CardNumber,
                 number.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             brand: decrypt_field(
-                "brand",
+                Field::Brand,
                 brand.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             exp_month: decrypt_field(
-                "exp_month",
+                Field::ExpMonth,
                 exp_month.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             exp_year: decrypt_field(
-                "exp_year",
+                Field::ExpYear,
                 exp_year.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             code: decrypt_field(
-                "code",
+                Field::Cvv,
                 code.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
@@ -2249,103 +2604,103 @@ fn decrypt_cipher(entry: &rbw::db::Entry) -> anyhow::Result<DecryptedCipher> {
             username,
         } => DecryptedData::Identity {
             title: decrypt_field(
-                "title",
+                Field::Title,
                 title.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             first_name: decrypt_field(
-                "first_name",
+                Field::FirstName,
                 first_name.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             middle_name: decrypt_field(
-                "middle_name",
+                Field::MiddleName,
                 middle_name.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             last_name: decrypt_field(
-                "last_name",
+                Field::LastName,
                 last_name.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             address1: decrypt_field(
-                "address1",
+                Field::Address1,
                 address1.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             address2: decrypt_field(
-                "address2",
+                Field::Address2,
                 address2.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             address3: decrypt_field(
-                "address3",
+                Field::Address3,
                 address3.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             city: decrypt_field(
-                "city",
+                Field::City,
                 city.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             state: decrypt_field(
-                "state",
+                Field::State,
                 state.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             postal_code: decrypt_field(
-                "postal_code",
+                Field::PostalCode,
                 postal_code.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             country: decrypt_field(
-                "country",
+                Field::Country,
                 country.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             phone: decrypt_field(
-                "phone",
+                Field::Phone,
                 phone.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             email: decrypt_field(
-                "email",
+                Field::Email,
                 email.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             ssn: decrypt_field(
-                "ssn",
+                Field::Ssn,
                 ssn.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             license_number: decrypt_field(
-                "license_number",
+                Field::License,
                 license_number.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             passport_number: decrypt_field(
-                "passport_number",
+                Field::Passport,
                 passport_number.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             username: decrypt_field(
-                "username",
+                Field::Username,
                 username.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
@@ -2355,17 +2710,23 @@ fn decrypt_cipher(entry: &rbw::db::Entry) -> anyhow::Result<DecryptedCipher> {
         rbw::db::EntryData::SshKey {
             public_key,
             fingerprint,
-            ..
+            private_key,
         } => DecryptedData::SshKey {
             public_key: decrypt_field(
-                "public_key",
+                Field::PublicKey,
                 public_key.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
             fingerprint: decrypt_field(
-                "fingerprint",
+                Field::Fingerprint,
                 fingerprint.as_deref(),
+                entry.key.as_deref(),
+                entry.org_id.as_deref(),
+            ),
+            private_key: decrypt_field(
+                Field::PrivateKey,
+                private_key.as_deref(),
                 entry.key.as_deref(),
                 entry.org_id.as_deref(),
             ),
@@ -2540,9 +2901,7 @@ fn generate_totp_algorithm_type(
         "SHA256" => Ok(totp_rs::Algorithm::SHA256),
         "SHA512" => Ok(totp_rs::Algorithm::SHA512),
         "STEAM" => Ok(totp_rs::Algorithm::Steam),
-        _ => {
-            Err(anyhow::anyhow!(format!("{} is not a valid algorithm", alg)))
-        }
+        _ => Err(anyhow::anyhow!(format!("{alg} is not a valid algorithm"))),
     }
 }
 
@@ -2562,8 +2921,7 @@ fn generate_totp(secret: &str) -> anyhow::Result<String> {
         "STEAM" => Ok(totp_rs::TOTP::new_steam(totp_params.secret)
             .generate_current()?),
         _ => Err(anyhow::anyhow!(format!(
-            "{} is not a valid totp algorithm",
-            alg
+            "{alg} is not a valid totp algorithm"
         ))),
     }
 }
@@ -3924,6 +4282,7 @@ mod test {
             },
             DecryptedSearchCipher {
                 id: id.to_string(),
+                entry_type: "Login".to_string(),
                 folder: folder.map(std::string::ToString::to_string),
                 name: name.to_string(),
                 user: username.map(std::string::ToString::to_string),

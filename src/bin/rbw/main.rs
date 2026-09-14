@@ -59,7 +59,7 @@ enum Opt {
         #[arg(
             long,
             help = "Fields to display. \
-                Available options are id, name, user, folder. \
+                Available options are id, name, user, folder, type. \
                 Multiple fields will be separated by tabs.",
             default_value = "name",
             use_value_delimiter = true
@@ -82,6 +82,8 @@ enum Opt {
         #[cfg(feature = "clipboard")]
         #[structopt(short, long, help = "Copy result to clipboard")]
         clipboard: bool,
+        #[structopt(short, long, help = "List fields in this entry")]
+        list_fields: bool,
     },
 
     #[command(about = "Search for entries")]
@@ -352,6 +354,7 @@ fn main() {
             raw,
             #[cfg(feature = "clipboard")]
             clipboard,
+            list_fields,
         } => commands::get(
             find_args.needle.clone(),
             find_args.user.as_deref(),
@@ -364,6 +367,7 @@ fn main() {
             #[cfg(not(feature = "clipboard"))]
             false,
             find_args.ignorecase,
+            list_fields,
         ),
         Opt::Search {
             term,

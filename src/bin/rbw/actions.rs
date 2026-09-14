@@ -34,9 +34,9 @@ pub fn unlocked() -> anyhow::Result<()> {
             match res {
                 rbw::protocol::Response::Ack => Ok(()),
                 rbw::protocol::Response::Error { error } => {
-                    Err(anyhow::anyhow!("{}", error))
+                    Err(anyhow::anyhow!("{error}"))
                 }
-                _ => Err(anyhow::anyhow!("unexpected message: {:?}", res)),
+                _ => Err(anyhow::anyhow!("unexpected message: {res:?}")),
             }
         }
         Err(e) => {
@@ -107,9 +107,9 @@ pub fn decrypt(
     match res {
         rbw::protocol::Response::Decrypt { plaintext } => Ok(plaintext),
         rbw::protocol::Response::Error { error } => {
-            Err(anyhow::anyhow!("failed to decrypt: {}", error))
+            Err(anyhow::anyhow!("failed to decrypt: {error}"))
         }
-        _ => Err(anyhow::anyhow!("unexpected message: {:?}", res)),
+        _ => Err(anyhow::anyhow!("unexpected message: {res:?}")),
     }
 }
 
@@ -130,9 +130,9 @@ pub fn encrypt(
     match res {
         rbw::protocol::Response::Encrypt { cipherstring } => Ok(cipherstring),
         rbw::protocol::Response::Error { error } => {
-            Err(anyhow::anyhow!("failed to encrypt: {}", error))
+            Err(anyhow::anyhow!("failed to encrypt: {error}"))
         }
-        _ => Err(anyhow::anyhow!("unexpected message: {:?}", res)),
+        _ => Err(anyhow::anyhow!("unexpected message: {res:?}")),
     }
 }
 
@@ -153,9 +153,9 @@ pub fn version() -> anyhow::Result<u32> {
     match res {
         rbw::protocol::Response::Version { version } => Ok(version),
         rbw::protocol::Response::Error { error } => {
-            Err(anyhow::anyhow!("failed to get version: {}", error))
+            Err(anyhow::anyhow!("failed to get version: {error}"))
         }
-        _ => Err(anyhow::anyhow!("unexpected message: {:?}", res)),
+        _ => Err(anyhow::anyhow!("unexpected message: {res:?}")),
     }
 }
 
@@ -168,9 +168,9 @@ fn simple_action(action: rbw::protocol::Action) -> anyhow::Result<()> {
     match res {
         rbw::protocol::Response::Ack => Ok(()),
         rbw::protocol::Response::Error { error } => {
-            Err(anyhow::anyhow!("{}", error))
+            Err(anyhow::anyhow!("{error}"))
         }
-        _ => Err(anyhow::anyhow!("unexpected message: {:?}", res)),
+        _ => Err(anyhow::anyhow!("unexpected message: {res:?}")),
     }
 }
 

@@ -16,8 +16,7 @@ pub async fn register(
             .context("failed to parse base url")?;
         let Some(host) = url.host_str() else {
             return Err(anyhow::anyhow!(
-                "couldn't find host in rbw base url {}",
-                url_str
+                "couldn't find host in rbw base url {url_str}"
             ));
         };
 
@@ -92,8 +91,7 @@ pub async fn login(
             .context("failed to parse base url")?;
         let Some(host) = url.host_str() else {
             return Err(anyhow::anyhow!(
-                "couldn't find host in rbw base url {}",
-                url_str
+                "couldn't find host in rbw base url {url_str}"
             ));
         };
 
@@ -334,13 +332,13 @@ async fn login_success(
     mut db: rbw::db::Db,
     email: String,
 ) -> anyhow::Result<()> {
-    db.access_token = Some(access_token.to_string());
-    db.refresh_token = Some(refresh_token.to_string());
+    db.access_token = Some(access_token.clone());
+    db.refresh_token = Some(refresh_token.clone());
     db.kdf = Some(kdf);
     db.iterations = Some(iterations);
     db.memory = memory;
     db.parallelism = parallelism;
-    db.protected_key = Some(protected_key.to_string());
+    db.protected_key = Some(protected_key.clone());
     save_db(&db).await?;
 
     sync(None, state.clone()).await?;
@@ -797,7 +795,7 @@ pub async fn clipboard_store(
 
 pub async fn version(sock: &mut crate::sock::Sock) -> anyhow::Result<()> {
     sock.send(&rbw::protocol::Response::Version {
-        version: rbw::protocol::version(),
+        version: rbw::protocol::VERSION,
     })
     .await?;
 
