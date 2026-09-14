@@ -175,6 +175,9 @@ pub enum Error {
     #[error("This device has not yet been registered with the Bitwarden server. Run `rbw register` first, and then try again.")]
     RegistrationRequired,
 
+    #[error("new device verification required")]
+    DeviceVerificationRequired,
+
     #[error("failed to remove db at {}", .file.display())]
     RemoveDb {
         source: std::io::Error,

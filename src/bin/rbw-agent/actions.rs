@@ -95,6 +95,7 @@ pub async fn login(
         let email = config_email().await?;
 
         let mut err_msg = None;
+        let mut device_otp: Option<String> = None;
         'attempts: for i in 1_u8..=3 {
             let err = if i > 1 {
                 // this unwrap is safe because we only ever continue the loop
@@ -113,7 +114,7 @@ pub async fn login(
             )
             .await
             .context("failed to read password from pinentry")?;
-            match rbw::actions::login(&email, password.clone(), None, None)
+            match rbw::actions::login(&email, password.clone(), None, None, device_otp.as_deref())
                 .await
             {
                 Ok((
@@ -140,6 +141,25 @@ pub async fn login(
                     )
                     .await?;
                     break 'attempts;
+                }
+                Err(rbw::error::Error::DeviceVerificationRequired) => {
+                    // Server sent OTP to user's email; prompt for it and retry.
+                    let otp = rbw::pinentry::getpin(
+                        &config_pinentry().await?,
+                        "Device Verification",
+                        "Bitwarden emailed you a verification code. Enter it:",
+                        None,
+                        environment,
+                        false,
+                    )
+                    .await
+                    .context("failed to read device OTP from pinentry")?;
+                    let otp_str = std::str::from_utf8(otp.password())
+                        .context("OTP was not valid UTF-8")?
+                        .to_string();
+                    device_otp = Some(otp_str);
+                    err_msg = None;
+                    continue 'attempts;
                 }
                 Err(rbw::error::Error::TwoFactorRequired {
                     providers,
@@ -264,6 +284,7 @@ async fn two_factor(
             password.clone(),
             Some(code),
             Some(provider),
+            None,
         )
         .await
         {
