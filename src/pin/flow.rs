@@ -7,8 +7,8 @@ use crate::pin::crypto::Argon2Params;
 use crate::{dirs, error, pin};
 use anyhow::Context;
 use argon2::password_hash::SaltString;
-use rand::rngs::OsRng;
-use rand::{CryptoRng, RngCore};
+use rand_8::rngs::OsRng;
+use rand_8::{CryptoRng, RngCore};
 use std::collections::HashMap;
 
 pub fn status() -> anyhow::Result<()> {
