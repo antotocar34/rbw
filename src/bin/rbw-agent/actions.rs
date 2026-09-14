@@ -1018,6 +1018,20 @@ pub async fn register_pin(
 
     unlock_state(state.clone(), &environment).await?;
 
+    // Extract keys before any await so the lock timeout can't clear them
+    // while we wait for the user to enter their PIN in pinentry.
+    let (keys, org_keys_owned) = {
+        let s = state.lock().await;
+        let keys = s
+            .priv_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("must be logged in to register a PIN"))?
+            .clone();
+        let org_keys_owned: HashMap<String, rbw::locked::Keys> =
+            s.org_keys.clone().unwrap_or_default();
+        (keys, org_keys_owned)
+    };
+
     let chosen_pin = if ask_for_pin {
         Some(
             rbw::pinentry::getpin(
@@ -1037,25 +1051,13 @@ pub async fn register_pin(
 
     let config = Config::load_async().await?;
 
-    {
-        let s = state.lock().await;
-
-        let keys = s
-            .priv_key
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("must be logged in to register a PIN"))?;
-
-        let org_keys_owned: HashMap<String, rbw::locked::Keys> =
-            s.org_keys.clone().unwrap_or_default();
-
-        rbw::pin::flow::register(
-            keys,
-            &org_keys_owned,
-            chosen_pin.as_ref(),
-            &config,
-            backend,
-        )?;
-    }
+    rbw::pin::flow::register(
+        &keys,
+        &org_keys_owned,
+        chosen_pin.as_ref(),
+        &config,
+        backend,
+    )?;
 
     respond_ack(sock).await?;
     Ok(())
