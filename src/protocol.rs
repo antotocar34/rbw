@@ -188,6 +188,11 @@ pub enum Action {
     },
     Quit,
     Version,
+    #[cfg(feature = "pin")]
+    PinRegister {
+        empty_pin: bool,
+        backend: crate::pin::backend::Backend,
+    },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
