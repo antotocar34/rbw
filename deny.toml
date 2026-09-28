@@ -16,6 +16,9 @@ ignore = [
     # this is only a warning about being unmaintained, the only known
     # undefined behavior is in a function we don't use
     "RUSTSEC-2025-0069",
+    # proc-macro-error2 is unmaintained; it's a build-time dependency of age
+    # (via i18n-embed-fl), only used by the optional "pin" feature
+    "RUSTSEC-2026-0173",
 ]
 
 [bans]
@@ -43,6 +46,29 @@ skip = [
     { name = "rand_chacha", version = "0.9.0" },
     { name = "getrandom", version = "0.2.16" },
     { name = "getrandom", version = "0.3.4" },
+    # age (optional "pin" feature) is still on the older RustCrypto stack
+    { name = "base64", version = "0.21.7" },
+    { name = "base64", version = "0.22.1" },
+    { name = "block-buffer", version = "0.10.4" },
+    { name = "block-buffer", version = "0.12.1" },
+    { name = "const-oid", version = "0.9.6" },
+    { name = "const-oid", version = "0.10.2" },
+    { name = "cpufeatures", version = "0.2.17" },
+    { name = "cpufeatures", version = "0.3.1" },
+    { name = "crypto-common", version = "0.1.7" },
+    { name = "crypto-common", version = "0.2.2" },
+    { name = "digest", version = "0.10.7" },
+    { name = "digest", version = "0.11.3" },
+    { name = "linux-raw-sys", version = "0.4.15" },
+    { name = "linux-raw-sys", version = "0.11.0" },
+    { name = "rustc-hash", version = "1.1.0" },
+    { name = "rustc-hash", version = "2.1.1" },
+    { name = "rustix", version = "0.38.44" },
+    { name = "rustix", version = "1.1.3" },
+    { name = "secrecy", version = "0.8.0" },
+    { name = "secrecy", version = "0.10.3" },
+    { name = "sha2", version = "0.10.9" },
+    { name = "sha2", version = "0.11.0" },
 ]
 
 [licenses]

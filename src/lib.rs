@@ -10,10 +10,10 @@ pub mod error;
 pub mod identity;
 pub mod json;
 pub mod locked;
+#[cfg(feature = "pin")]
+pub mod pin;
 pub mod pinentry;
 mod prelude;
 pub mod protocol;
 pub mod pwgen;
 pub mod wordlist;
-#[cfg(feature = "pin")]
-pub mod pin;

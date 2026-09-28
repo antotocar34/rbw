@@ -1,16 +1,10 @@
-use std::fs;
-use std::io::{BufReader, Read, Write};
-
-use crate::dirs;
 use crate::locked::Vec;
-use crate::pin;
-use crate::pin::backend::{BackendConfig, PinBackend};
-use age::{plugin, Decryptor};
-use anyhow::{anyhow, Context};
-use serde::{Deserialize, Serialize};
-use std::fs::File;
-use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use crate::pin::backend::{remove_file_if_exists, write_private_file};
+use crate::pin::crypto::LOCAL_SECRET_LEN;
+use age::plugin;
+use anyhow::{anyhow, bail, Context as _};
+use std::io::Read as _;
+use std::path::Path;
 
 pub const SUPPORTED_AGE_PLUGINS: [&str; 3] = [
     "yubikey", // https://github.com/str4d/age-plugin-yubikey
@@ -18,221 +12,140 @@ pub const SUPPORTED_AGE_PLUGINS: [&str; 3] = [
     "se",      // https://github.com/remko/age-plugin-se
 ];
 
-#[derive(Serialize, Deserialize)]
-pub struct AgePinBackend;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AgeConfig {
-    #[serde(rename = "age_identity_file_path")]
-    pub identity_file_path: PathBuf,
+pub fn validate(identity_file: &Path) -> anyhow::Result<()> {
+    if !identity_file.is_file() {
+        bail!("age identity file {} not found", identity_file.display());
+    }
+    identity(identity_file, age::NoCallbacks).map(|_| ())
 }
 
-impl Default for AgeConfig {
-    fn default() -> Self {
-        Self::new()
-    }
+pub fn store<C: age::Callbacks>(
+    local_secret: &Vec,
+    identity_file: &Path,
+    secret_file: &Path,
+    callbacks: C,
+) -> anyhow::Result<()> {
+    let (_, recipient) = identity(identity_file, callbacks)?;
+    let encryptor =
+        age::Encryptor::with_recipients(std::iter::once(recipient.as_ref()))?;
+
+    let mut encrypted = std::vec::Vec::new();
+    let mut writer = encryptor.wrap_output(&mut encrypted)?;
+    std::io::Write::write_all(&mut writer, local_secret.data())?;
+    writer.finish()?;
+
+    write_private_file(secret_file, &encrypted)
 }
 
-impl AgeConfig {
-    pub fn new() -> Self {
-        Self {
-            identity_file_path: "".into(),
-        }
-    }
-    fn _validate(&self) -> anyhow::Result<()> {
-        match fs::exists::<&PathBuf>(&self.identity_file_path) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(anyhow!("Age identity file not found")),
-        }
+pub fn retrieve<C: age::Callbacks>(
+    identity_file: &Path,
+    secret_file: &Path,
+    callbacks: C,
+) -> anyhow::Result<Vec> {
+    let (identity, _) = identity(identity_file, callbacks)?;
+    let file = std::fs::File::open(secret_file)
+        .context("could not open age-wrapped local secret")?;
+    let decryptor = age::Decryptor::new(std::io::BufReader::new(file))?;
+    let mut reader = decryptor
+        .decrypt(std::iter::once(identity.as_ref()))
+        .context("failed to decrypt age-wrapped local secret")?;
 
-        // TODO check if the file is parseable and the plugin is supported
-        // this is enough for now
+    let mut local_secret = Vec::new();
+    local_secret.extend(std::iter::repeat_n(0, LOCAL_SECRET_LEN));
+    reader.read_exact(local_secret.data_mut())?;
+    if reader.read(&mut [0])? != 0 {
+        bail!("age-wrapped local secret has the wrong length");
     }
+    Ok(local_secret)
 }
 
-impl BackendConfig for AgeConfig {}
-
-impl PinBackend for AgePinBackend {
-    type Config = AgeConfig;
-    fn retrieve_local_secret(
-        &self,
-        config: &AgeConfig,
-    ) -> anyhow::Result<Vec> {
-        let age_file_path = dirs::pin_age_wrapped_local_secret_file();
-
-        let (identity, _) = age_identity(config).context("could not parse age identity")?;
-        let reader = BufReader::new(File::open(age_file_path)?);
-        let decryptor = Decryptor::new(reader)?;
-
-        // let identities: [&dyn age::Identity; 1] = [&identity.as_ref()];
-        let mut decrypted_reader = decryptor
-            .decrypt(std::iter::once(identity.as_ref()))
-            .context("Failed to decrypt age wrapped local secret")?;
-
-        let mut kek = Vec::new();
-        kek.extend(std::iter::repeat_n(0, pin::crypto::KEK_LEN));
-
-        decrypted_reader.read_exact(kek.data_mut())?;
-
-        Ok(kek)
-    }
-
-
-    fn store_local_secret(
-        &self,
-        local_secret: &Vec,
-        config: &AgeConfig,
-    ) -> anyhow::Result<()> {
-        let (_, recipient) = age_identity(config)?;
-        let final_path = dirs::pin_age_wrapped_local_secret_file();
-        let parent_dir = final_path.parent().context("No parent dir")?;
-
-        let mut temp_file = tempfile::NamedTempFile::new_in(parent_dir)?;
-        fs::set_permissions(temp_file.path(), fs::Permissions::from_mode(0o600))?;
-
-        let encryptor = age::Encryptor::with_recipients(std::iter::once(recipient.as_ref()))?;
-        
-        let mut writer = encryptor.wrap_output(temp_file.as_file_mut())?;
-        writer.write_all(local_secret.data())?;
-        writer.finish()?;
-
-        temp_file.as_file().sync_all()?;
-
-        // Atomic swap (replaces old file only if everything above succeeded)
-        temp_file.persist(final_path).map_err(|e| e.error)?;
-
-        Ok(())
-    }
-
-    fn clear_local_secret(&self) -> anyhow::Result<()> {
-        fs::remove_file(dirs::pin_age_wrapped_local_secret_file())
-            .context("Failed to remove the age wrapped local secret.")?;
-        Ok(())
-    }
+pub fn clear(secret_file: &Path) -> anyhow::Result<()> {
+    remove_file_if_exists(secret_file)
 }
 
-fn age_identity(
-    config: &pin::backend::age::AgeConfig,
-) -> anyhow::Result<(Box<dyn age::Identity>, Box<dyn age::Recipient>)> {
-    let age_identity_str = fs::read_to_string(&config.identity_file_path)?;
-    let cleaned_string: String = age_identity_str
+type IdentityAndRecipient = (Box<dyn age::Identity>, Box<dyn age::Recipient>);
+
+fn identity<C: age::Callbacks>(
+    identity_file: &Path,
+    callbacks: C,
+) -> anyhow::Result<IdentityAndRecipient> {
+    let contents =
+        std::fs::read_to_string(identity_file).with_context(|| {
+            format!("could not read age identity {}", identity_file.display())
+        })?;
+    let line = contents
         .lines()
-        .filter(|s| !s.trim_start().starts_with('#'))
-        .filter(|s| !s.trim().is_empty())
         .map(str::trim)
-        .collect::<std::vec::Vec<_>>()
-        .join("\n");
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .ok_or_else(|| anyhow!("age identity file is empty"))?;
 
-    if let Ok(identity) = cleaned_string.parse::<plugin::Identity>() {
-        if SUPPORTED_AGE_PLUGINS.iter().any(|&x| x == identity.plugin()) {
-            let id_plugin = plugin::IdentityPluginV1::new(
-                identity.plugin(),
-                std::slice::from_ref(&identity),
-                age::NoCallbacks,
-            ).context("Failed to initialize age plugin identity")?;
-            
-            let rec_plugin = plugin::RecipientPluginV1::new(
-                identity.plugin(),
-                &[], // no extra recipients
-                std::slice::from_ref(&identity),
-                age::NoCallbacks,
-            ).context("Failed to initialize age plugin recipient")?;
-
-            return Ok((Box::new(id_plugin), Box::new(rec_plugin)));
+    if let Ok(identity) = line.parse::<plugin::Identity>() {
+        if !SUPPORTED_AGE_PLUGINS.contains(&identity.plugin()) {
+            bail!("age plugin '{}' is not supported", identity.plugin());
         }
-        anyhow::bail!("Plugin '{}' is not supported", identity.plugin());
+        let id_plugin = plugin::IdentityPluginV1::new(
+            identity.plugin(),
+            std::slice::from_ref(&identity),
+            callbacks.clone(),
+        )
+        .context("failed to initialize age plugin identity")?;
+        let rec_plugin = plugin::RecipientPluginV1::new(
+            identity.plugin(),
+            &[],
+            std::slice::from_ref(&identity),
+            callbacks,
+        )
+        .context("failed to initialize age plugin recipient")?;
+        return Ok((Box::new(id_plugin), Box::new(rec_plugin)));
     }
 
-    // Fallback parse a regular age identity during tests
+    // plain x25519 identities aren't device-bound, so they're only accepted
+    // in tests
     #[cfg(test)]
-    {
-        if let Ok(standard_id) = cleaned_string.parse::<age::x25519::Identity>() {
-            let recipient = standard_id.to_public();
-            return Ok((Box::new(standard_id), Box::new(recipient)));
-        }
+    if let Ok(identity) = line.parse::<age::x25519::Identity>() {
+        let recipient = identity.to_public();
+        return Ok((Box::new(identity), Box::new(recipient)));
     }
 
-    anyhow::bail!("Invalid age-plugin identity file")
+    bail!("{} is not an age plugin identity", identity_file.display())
 }
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    use crate::config::Config;
+    pub const TEST_IDENTITY: &str = "AGE-SECRET-KEY-1J6CR00H6EZHNT6R7PP0RM2ADCV2F49Z32XFJLP89VGK6Z4NJRHYQV82S8U";
 
-    const TEST_IDENTITY: &str = "AGE-SECRET-KEY-1J6CR00H6EZHNT6R7PP0RM2ADCV2F49Z32XFJLP89VGK6Z4NJRHYQV82S8U";
+    #[test]
+    fn pin_age_store_retrieve() {
+        let dir = tempfile::tempdir().unwrap();
+        let identity_file = dir.path().join("identity.txt");
+        std::fs::write(
+            &identity_file,
+            format!("# comment\n{TEST_IDENTITY}\n"),
+        )
+        .unwrap();
+        let secret_file = dir.path().join("secret.age");
 
-    fn create_temp_file_of_contents(
-        contents: &[u8],
-    ) -> tempfile::NamedTempFile {
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(contents).unwrap();
-        file
-    }
+        let mut secret = Vec::new();
+        secret.extend(std::iter::repeat_n(b'0', LOCAL_SECRET_LEN));
 
-    fn create_vec(bytes: &[u8]) -> crate::locked::Vec {
-        let mut vec = crate::locked::Vec::new();
-        vec.extend(bytes.iter().copied());
-        vec
+        validate(&identity_file).unwrap();
+        store(&secret, &identity_file, &secret_file, age::NoCallbacks)
+            .unwrap();
+        let retrieved =
+            retrieve(&identity_file, &secret_file, age::NoCallbacks).unwrap();
+        assert_eq!(retrieved.data(), secret.data());
+
+        clear(&secret_file).unwrap();
+        assert!(!secret_file.exists());
+        // clearing twice is fine
+        clear(&secret_file).unwrap();
     }
 
     #[test]
-    fn pin_age_parse_identity_file() {
-        let identity_file =
-            create_temp_file_of_contents(TEST_IDENTITY.as_bytes());
-
-        let pin_config = pin::backend::PinBackendConfig {
-            enable_pin: true,
-            keyring: None,
-            age: Some(AgeConfig {
-                identity_file_path: identity_file.path().into(),
-            }),
-            kdf_params: Some(pin::crypto::Argon2Params::new()),
-        };
-
-        match age_identity(&pin_config.age.unwrap()) {
-            Ok(_) => (),
-            Err(_) => assert!(false),
-        }
-    }
-
-    #[test]
-    fn pin_age_plugin_store_retrieve() {
-        let identity_file =
-            create_temp_file_of_contents(TEST_IDENTITY.as_bytes());
-        let config = Config {
-            email: None,
-            sso_id: None,
-            base_url: None,
-            identity_url: None,
-            ui_url: None,
-            notifications_url: None,
-            lock_timeout: 60 * 60 * 24,
-            sync_interval: 1000,
-            pinentry: "".to_string(),
-            client_cert_path: None,
-            device_id: None,
-            pin_config: Some(pin::backend::PinBackendConfig {
-                enable_pin: true,
-                keyring: None,
-                age: Some(AgeConfig {
-                    identity_file_path: identity_file.path().into(),
-                }),
-                kdf_params: Some(pin::crypto::Argon2Params::new()),
-            }),
-        };
-
-        let dummy_kek = create_vec(&[b'0'; 32]);
-
-        let backend = AgePinBackend;
-
-        let age_config = config.pin_config.unwrap().age.unwrap();
-
-        backend.store_local_secret(&dummy_kek, &age_config).unwrap();
-
-        let decrypted_kek =
-            backend.retrieve_local_secret(&age_config).unwrap();
-
-        assert_eq!(decrypted_kek.data(), [b'0'; 32].as_ref())
+    fn pin_age_validate_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(validate(&dir.path().join("missing")).is_err());
     }
 }

@@ -1,41 +1,45 @@
-use crate::pin::backend::{BackendConfig, PinBackend};
-use keyring::Entry;
-use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, Zeroizing};
+use crate::locked::Vec;
+use crate::pin::crypto::LOCAL_SECRET_LEN;
+use anyhow::bail;
+use keyring::credential::CredentialPersistence;
+use zeroize::Zeroizing;
 
-pub struct KeyringPinBackend;
+const SERVICE: &str = "rbw";
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct KeyringConfig {}
-impl BackendConfig for KeyringConfig {}
+fn entry() -> anyhow::Result<keyring::Entry> {
+    Ok(keyring::Entry::new(SERVICE, &crate::dirs::profile())?)
+}
 
-impl PinBackend for KeyringPinBackend {
-    type Config = KeyringConfig;
-    fn retrieve_local_secret(
-        &self,
-        _: &KeyringConfig,
-    ) -> anyhow::Result<crate::locked::Vec> {
-        let entry = Entry::new("rbw", crate::dirs::profile().as_str())?;
-        let mut entry = entry.get_secret().map(Zeroizing::new)?;
-        let mut local_secret = crate::locked::Vec::new();
-        local_secret.extend(entry.iter().copied());
-        entry.zeroize();
-        Ok(local_secret)
+/// keyring silently falls back to an in-memory mock store on platforms
+/// without a supported keyring, so refuse to use it unless secrets persist.
+pub fn check_available() -> anyhow::Result<()> {
+    let persistence =
+        keyring::default::default_credential_builder().persistence();
+    if !matches!(persistence, CredentialPersistence::UntilDelete) {
+        bail!("no persistent OS keyring is available on this platform");
     }
-    fn store_local_secret(
-        &self,
-        kek: &crate::locked::Vec,
-        _: &KeyringConfig,
-    ) -> anyhow::Result<()> {
-        let entry = Entry::new("rbw", crate::dirs::profile().as_str())?;
-        entry.set_secret(kek.data())?;
-        Ok(())
-    }
+    Ok(())
+}
 
-    fn clear_local_secret(&self) -> anyhow::Result<()> {
-        let entry = Entry::new("rbw", crate::dirs::profile().as_str())?;
-        entry
-            .delete_credential()
-            .map_err(|_| anyhow::anyhow!("Could not delete credential"))
+pub fn store(local_secret: &Vec) -> anyhow::Result<()> {
+    check_available()?;
+    entry()?.set_secret(local_secret.data())?;
+    Ok(())
+}
+
+pub fn retrieve() -> anyhow::Result<Vec> {
+    let secret = Zeroizing::new(entry()?.get_secret()?);
+    if secret.len() != LOCAL_SECRET_LEN {
+        bail!("local secret in the OS keyring has the wrong length");
+    }
+    let mut local_secret = Vec::new();
+    local_secret.extend(secret.iter().copied());
+    Ok(local_secret)
+}
+
+pub fn clear() -> anyhow::Result<()> {
+    match entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.into()),
     }
 }

@@ -5,6 +5,8 @@ mod agent;
 mod daemon;
 mod debugger;
 mod notifications;
+#[cfg(feature = "pin")]
+mod pin;
 mod sock;
 mod ssh_agent;
 mod state;

@@ -1,152 +1,227 @@
-#![cfg(feature = "pin")]
-use crate::config::Config;
-use crate::error::Error;
-use crate::locked::{Keys, Password, Vec};
-use crate::pin::backend::{Backend, PinBackend, PinState};
-use crate::pin::crypto::Argon2Params;
-use crate::{dirs, error, pin};
-use anyhow::Context;
-use argon2::password_hash::SaltString;
-use rand::rngs::OsRng;
-use rand::{CryptoRng, RngCore};
-use std::collections::HashMap;
+use crate::locked::{Keys, Password};
+use crate::pin::backend::{
+    remove_file_if_exists, Backend, Paths, PinBackendConfig, PinState,
+};
+use crate::pin::crypto;
+use anyhow::{bail, Context as _};
 
-pub fn status() -> anyhow::Result<()> {
-    let state_exists =
-        std::fs::exists(dirs::pin_state_file()).is_ok_and(|b| b);
-
-    let enabled_msg = format!("Pin enabled: {state_exists}");
-
-    let mut backend_msg = String::new();
-    if let Ok(pin_state) = load_pin_state() {
-        let backend = pin_state.backend;
-        let backend_name = match backend {
-            Backend::Age => "age",
-            Backend::OSKeyring => "keyring",
-        };
-        backend_msg.push_str(format!("Backend: {backend_name}").as_str());
-    }
-    let parts = [enabled_msg, backend_msg];
-    let msg = parts.join("\n");
-    println!("{msg}");
-    Ok(())
-}
-
-pub fn unlock_with_pin(
-    pin: Option<&Password>,
-    pin_state: &PinState,
-    config: Config,
-) -> error::Result<(Keys, HashMap<String, Keys>)> {
-    let (wrapped_key, wrapped_org_keys, salt, kdf_params, _, backend) =
-        pin_state.unpack().map_err(|_| Error::PinError {
-            message: "couldn't deserialize pin state".into(),
-        })?;
-
-    let pin_config = config.pin_config.ok_or_else(|| Error::PinError {
-        message: "pin config not set".to_string(),
-    })?;
-    let local_secret =
-        backend.retrieve_local_secret(&pin_config).map_err(|e| {
-            Error::PinError {
-                message: format!("couldn't retrieve local secret: {}", e).into(),
-            }
-        })?;
-
-    let kek = pin::crypto::derive_kek_from_pin(
-        pin,
-        &local_secret,
-        &salt,
-        &kdf_params,
-    )?;
-
-    let (keys, org_keys) =
-        pin::crypto::unwrap_dek(&kek, &wrapped_key, &wrapped_org_keys)?;
-
-    Ok((keys, org_keys))
-}
-
-pub fn register<S: ::std::hash::BuildHasher>(
+pub fn register<C: age::Callbacks>(
     keys: &Keys,
-    org_keys: &HashMap<String, Keys, S>,
     pin: Option<&Password>,
-    config: &Config,
+    config: &PinBackendConfig,
     backend: Backend,
+    paths: &Paths,
+    callbacks: C,
 ) -> anyhow::Result<()> {
-    let pin_config = config
-        .pin_config
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Pin Config not set"))?;
+    if !config.enable_pin {
+        bail!(
+            "PIN unlock is disabled (run `rbw config set enable_pin true`)"
+        );
+    }
+    backend.check_available(config)?;
 
-    pin_config
-        .enable_pin
-        .then_some(())
-        .ok_or_else(|| anyhow::anyhow!("enable_pin not set in config"))?;
-
-    let local_secret = generate_local_secret(OsRng);
-    backend.store_local_secret(&local_secret, pin_config)?;
-
-    let default_kdf_params = Argon2Params::new();
-    let kdf_params = if let Some(pin_config) = config.pin_config.as_ref() {
-        &pin_config.kdf_params.clone().unwrap_or(default_kdf_params)
-    } else {
-        &default_kdf_params
-    };
-
-    let salt = SaltString::generate(&mut OsRng);
-    let kek = pin::crypto::derive_kek_from_pin(
-        pin,
-        &local_secret,
+    let local_secret = crypto::generate_local_secret();
+    let salt = crypto::generate_salt();
+    let kek =
+        crypto::derive_kek(pin, &local_secret, &salt, &config.kdf_params)?;
+    let wrapped_key = crypto::wrap_key(&kek, keys, &crate::dirs::profile())?;
+    let state = PinState::new(
+        wrapped_key,
         &salt,
-        kdf_params,
-    )?;
-
-    let (wrapped_keys, wrapped_org_keys) =
-        pin::crypto::wrap_dek(&kek, keys, org_keys)?;
-
-    let state_to_save = PinState::new(
-        wrapped_keys,
-        wrapped_org_keys,
-        &salt,
-        kdf_params.clone(),
+        config.kdf_params.clone(),
         pin.is_none(),
         backend,
-    )?;
+    );
 
-    state_to_save.write_to_file(dirs::pin_state_file())?;
-
+    // drop any existing PIN first, so that if a later step fails the user is
+    // left with no PIN rather than a state file and a local secret that don't
+    // match
+    clear(paths)?;
+    backend.store_local_secret(&local_secret, config, paths, callbacks)?;
+    if let Err(e) = state.write_to_file(&paths.state_file) {
+        let _ = backend.clear_local_secret(paths);
+        return Err(e);
+    }
     Ok(())
 }
 
-pub fn clear() -> anyhow::Result<()> {
-    // Try to clear the secret if we can read the state.
-    if let Ok(state) = load_pin_state().context("reading pin state file") {
-        state
-            .backend
-            .clear_local_secret()
-            .context("clearing local secret")?;
+/// Recover the user key. The caller must still check it against the local
+/// database (see `rbw::actions::unlock_with_key`).
+pub fn unlock<C: age::Callbacks>(
+    pin: Option<&Password>,
+    state: &PinState,
+    config: &PinBackendConfig,
+    paths: &Paths,
+    callbacks: C,
+) -> anyhow::Result<Keys> {
+    let local_secret = state
+        .backend()
+        .retrieve_local_secret(config, paths, callbacks)
+        .context("couldn't retrieve the local secret")?;
+    let kek = crypto::derive_kek(
+        pin,
+        &local_secret,
+        &state.salt()?,
+        state.kdf_params(),
+    )?;
+    Ok(crypto::unwrap_key(
+        &kek,
+        state.wrapped_key(),
+        &crate::dirs::profile(),
+    )?)
+}
+
+pub fn is_registered(paths: &Paths) -> bool {
+    paths.state_file.exists()
+}
+
+pub fn load_state(paths: &Paths) -> anyhow::Result<PinState> {
+    PinState::read_from_file(&paths.state_file)
+}
+
+/// Remove the PIN. Succeeds if there is no PIN, or if parts of it are
+/// already gone.
+pub fn clear(paths: &Paths) -> anyhow::Result<()> {
+    let state = load_state(paths).ok();
+
+    // remove the state file first, so PIN unlock is disabled even if cleaning
+    // up the local secret fails
+    remove_file_if_exists(&paths.state_file)?;
+
+    // try every backend that may hold a secret, even if an earlier one fails
+    let age_res = Backend::Age.clear_local_secret(paths);
+    let keyring_res =
+        if state.is_some_and(|s| s.backend() == Backend::OSKeyring) {
+            Backend::OSKeyring.clear_local_secret(paths)
+        } else {
+            Ok(())
+        };
+    age_res
+        .and(keyring_res)
+        .context("failed to remove the PIN's local secret")
+}
+
+pub fn status(paths: &Paths) -> String {
+    if !is_registered(paths) {
+        return "PIN: not set".to_string();
+    }
+    match load_state(paths) {
+        Ok(state) => format!(
+            "PIN: set\nBackend: {}\nEmpty PIN: {}",
+            state.backend(),
+            state.empty_pin()
+        ),
+        Err(e) => format!("PIN: invalid ({e:#})"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::locked::Vec;
+    use crate::pin::backend::age::tests::TEST_IDENTITY;
+
+    fn locked(bytes: &[u8]) -> Vec {
+        let mut vec = Vec::new();
+        vec.extend(bytes.iter().copied());
+        vec
     }
 
-    match std::fs::remove_file(dirs::pin_state_file()) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).context("removing pin state file"),
+    fn setup() -> (tempfile::TempDir, Paths, PinBackendConfig) {
+        let dir = tempfile::tempdir().unwrap();
+        let identity_file = dir.path().join("identity.txt");
+        std::fs::write(&identity_file, TEST_IDENTITY).unwrap();
+        let paths = Paths {
+            state_file: dir.path().join("cache/pin-state.json"),
+            age_secret_file: dir.path().join("cache/pin-secret.age"),
+        };
+        let config = PinBackendConfig {
+            enable_pin: true,
+            kdf_params: crypto::Argon2Params {
+                memory: 128,
+                iterations: 1,
+                parallelism: 1,
+            },
+            age_identity_file: Some(identity_file),
+        };
+        (dir, paths, config)
     }
-}
 
-pub fn empty_pin() -> bool {
-    load_pin_state().map(|s| s.empty_pin).unwrap_or(false)
-}
+    #[test]
+    fn pin_register_unlock_clear() {
+        let (_dir, paths, config) = setup();
+        let keys = Keys::new(locked(&[7; 64]));
+        let pin = Password::new(locked(b"1234"));
 
-// simply generate 32 bytes
-fn generate_local_secret<T: RngCore + CryptoRng>(mut rng: T) -> Vec {
-    let mut buf = Vec::new();
-    buf.extend(std::iter::repeat_n(0, 32));
-    rng.fill_bytes(buf.data_mut());
-    buf
-}
+        register(
+            &keys,
+            Some(&pin),
+            &config,
+            Backend::Age,
+            &paths,
+            age::NoCallbacks,
+        )
+        .unwrap();
+        assert!(is_registered(&paths));
 
-pub fn load_pin_state() -> anyhow::Result<PinState> {
-    let pin_state = PinState::read_from_file(dirs::pin_state_file())?;
+        let state = load_state(&paths).unwrap();
+        assert!(!state.empty_pin());
+        let unlocked =
+            unlock(Some(&pin), &state, &config, &paths, age::NoCallbacks)
+                .unwrap();
+        assert_eq!(unlocked.enc_key(), keys.enc_key());
+        assert_eq!(unlocked.mac_key(), keys.mac_key());
 
-    Ok(pin_state)
+        let wrong = Password::new(locked(b"0000"));
+        assert!(unlock(
+            Some(&wrong),
+            &state,
+            &config,
+            &paths,
+            age::NoCallbacks
+        )
+        .is_err());
+
+        clear(&paths).unwrap();
+        assert!(!paths.state_file.exists());
+        assert!(!paths.age_secret_file.exists());
+    }
+
+    #[test]
+    fn pin_clear_when_secret_already_gone() {
+        let (_dir, paths, config) = setup();
+        let keys = Keys::new(locked(&[7; 64]));
+        register(
+            &keys,
+            None,
+            &config,
+            Backend::Age,
+            &paths,
+            age::NoCallbacks,
+        )
+        .unwrap();
+        std::fs::remove_file(&paths.age_secret_file).unwrap();
+
+        clear(&paths).unwrap();
+        assert!(!is_registered(&paths));
+        // and with nothing set at all
+        clear(&paths).unwrap();
+    }
+
+    #[test]
+    fn pin_register_requires_enable_pin() {
+        let (_dir, paths, mut config) = setup();
+        config.enable_pin = false;
+        let keys = Keys::new(locked(&[7; 64]));
+        assert!(register(
+            &keys,
+            None,
+            &config,
+            Backend::Age,
+            &paths,
+            age::NoCallbacks
+        )
+        .is_err());
+        assert!(!is_registered(&paths));
+    }
 }

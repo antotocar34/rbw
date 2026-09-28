@@ -110,6 +110,20 @@ pub fn unlock<S: std::hash::BuildHasher>(
         Err(e) => return Err(e),
     };
 
+    unlock_with_key(key, protected_private_key, protected_org_keys)
+}
+
+/// Finish unlocking once the user's symmetric key is known: decrypt the
+/// private key and the organization keys from the local database. Fails with
+/// `InvalidMac` if `key` doesn't belong to this database.
+pub fn unlock_with_key<S: std::hash::BuildHasher>(
+    key: crate::locked::Keys,
+    protected_private_key: &str,
+    protected_org_keys: &std::collections::HashMap<String, String, S>,
+) -> Result<(
+    crate::locked::Keys,
+    std::collections::HashMap<String, crate::locked::Keys>,
+)> {
     let protected_private_key =
         crate::cipherstring::CipherString::new(protected_private_key)?;
     let private_key =

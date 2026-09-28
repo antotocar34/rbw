@@ -1269,6 +1269,22 @@ pub fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
             config.sync_interval = interval;
         }
         "pinentry" => config.pinentry = value.to_string(),
+        #[cfg(feature = "pin")]
+        "enable_pin" => {
+            config
+                .pin_config
+                .get_or_insert_with(Default::default)
+                .enable_pin = value
+                .parse()
+                .context("failed to parse value for enable_pin")?;
+        }
+        #[cfg(feature = "pin")]
+        "age_identity_file_path" => {
+            config
+                .pin_config
+                .get_or_insert_with(Default::default)
+                .age_identity_file = Some(value.into());
+        }
         _ => return Err(anyhow::anyhow!("invalid config key: {key}")),
     }
     config.save()?;
@@ -1298,6 +1314,18 @@ pub fn config_unset(key: &str) -> anyhow::Result<()> {
             config.lock_timeout = rbw::config::default_lock_timeout();
         }
         "pinentry" => config.pinentry = rbw::config::default_pinentry(),
+        #[cfg(feature = "pin")]
+        "enable_pin" => {
+            if let Some(pin_config) = &mut config.pin_config {
+                pin_config.enable_pin = false;
+            }
+        }
+        #[cfg(feature = "pin")]
+        "age_identity_file_path" => {
+            if let Some(pin_config) = &mut config.pin_config {
+                pin_config.age_identity_file = None;
+            }
+        }
         _ => return Err(anyhow::anyhow!("invalid config key: {key}")),
     }
     config.save()?;
@@ -1342,7 +1370,7 @@ pub fn unlock() -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "pin")]
-pub fn register_pin(
+pub fn pin_set(
     empty_pin: bool,
     backend: rbw::pin::backend::Backend,
 ) -> anyhow::Result<()> {
@@ -1350,6 +1378,21 @@ pub fn register_pin(
     crate::actions::login()?;
     crate::actions::unlock()?;
     crate::actions::register_pin(empty_pin, backend)?;
+    Ok(())
+}
+
+#[cfg(feature = "pin")]
+pub fn pin_clear() -> anyhow::Result<()> {
+    rbw::pin::flow::clear(&rbw::pin::backend::Paths::new())
+}
+
+#[cfg(feature = "pin")]
+#[allow(clippy::unnecessary_wraps)]
+pub fn pin_status() -> anyhow::Result<()> {
+    println!(
+        "{}",
+        rbw::pin::flow::status(&rbw::pin::backend::Paths::new())
+    );
     Ok(())
 }
 
@@ -1955,7 +1998,16 @@ pub fn lock() -> anyhow::Result<()> {
 pub fn purge() -> anyhow::Result<()> {
     stop_agent()?;
 
+    // the PIN wraps the vault key, so it has to go along with the vault. try
+    // both even if one fails, so a keyring problem can't leave the vault on
+    // disk
+    #[cfg(feature = "pin")]
+    let pin_res = rbw::pin::flow::clear(&rbw::pin::backend::Paths::new());
+
     remove_db()?;
+
+    #[cfg(feature = "pin")]
+    pin_res?;
 
     Ok(())
 }

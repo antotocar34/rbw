@@ -107,20 +107,30 @@ configuration, local vault, and agent.
 
 ## Quick Unlock (PIN)
 
-`rbw` supports unlocking your vault with a short PIN instead of your master password. The PIN protects a device-bound local secret that is used to encrypt your vault keys. This provides quick access while maintaining security: an attacker who gains read access to your storage cannot decrypt your vault without both the PIN and the device-bound local secret.
+`rbw` can unlock your vault with a short PIN instead of your master password.
+The PIN is combined with a device-bound local secret to encrypt your vault
+key, so an attacker who can read your disk can't decrypt your vault without
+both the PIN and the local secret. PIN unlock is disabled until you turn it
+on:
+
+```sh
+rbw config set enable_pin true
+```
 
 ### Supported Backends
 
-Two backend options are available for storing the local secret:
+Two backends are available for storing the local secret:
 
 #### `age` Backend
 
-Uses [age](https://github.com/FiloSottile/age) encryption with plugin-based identities. Only age plugins are supported (not regular age identities) to ensure the local secret is bound to hardware.
+Uses [age](https://github.com/FiloSottile/age) encryption with plugin-based
+identities. Only age plugins are supported (not regular age identities), so
+the local secret is bound to hardware.
 
 **Supported age plugins:**
 - [`age-plugin-yubikey`](https://github.com/str4d/age-plugin-yubikey) - Uses YubiKey PIV
 - [`age-plugin-tpm`](https://github.com/Foxboron/age-plugin-tpm) - Uses TPM 2.0
-- [`age-plugin-se`](https://github.com/remko/age-plugin-se) - Uses macOS/iOS Secure Enclave
+- [`age-plugin-se`](https://github.com/remko/age-plugin-se) - Uses macOS Secure Enclave
 
 **Setup:**
 
@@ -134,9 +144,15 @@ Uses [age](https://github.com/FiloSottile/age) encryption with plugin-based iden
    rbw pin set --backend age
    ```
 
+Plugin requests for input (such as a YubiKey PIN) are passed to your
+configured pinentry. Plugin messages such as touch prompts are only written to
+the agent's log, so watch your device.
+
 #### `os-keyring` Backend
 
-Uses your operating system's native keyring (macOS Keychain, Windows Credential Manager, or Linux Secret Service).
+Uses your operating system's keyring: the macOS Keychain, or the Secret
+Service on Linux (e.g. GNOME Keyring or KWallet). `rbw pin set` refuses to use
+this backend if no persistent keyring is available.
 
 **Setup:**
 ```sh
@@ -144,6 +160,43 @@ rbw pin set --backend os-keyring
 ```
 
 ### Usage
+
+Once configured, `rbw unlock` asks for your PIN instead of your master
+password. If PIN unlock fails, or you cancel the PIN prompt, it falls back to
+the master password and shows why.
+
+**Manage PIN:**
+```sh
+# Set up PIN with a backend
+rbw pin set --backend age
+rbw pin set --backend os-keyring
+
+# Check PIN status
+rbw pin status
+
+# Remove PIN
+rbw pin clear
+```
+
+`rbw purge` also removes the PIN.
+
+The PIN is stretched with Argon2id. The parameters can be tuned by adding
+`argon2_memory` (in KiB, default 65536), `argon2_iterations` (default 3), and
+`argon2_parallelism` (default 4) to the `pin_config` section of the config
+file, then running `rbw pin set` again.
+
+### Empty PIN with Hardware Tokens
+
+For hardware token workflows where the security comes entirely from the
+hardware (e.g., YubiKey requiring touch), you can use an empty PIN:
+
+```sh
+rbw pin set --backend age --empty-pin
+```
+
+This skips PIN entry but still requires the hardware token for unlock.
+
+## Usage
 
 Once configured, `rbw unlock` will prompt for your PIN instead of your master password. If PIN unlock fails, it automatically falls back to the master password.
 

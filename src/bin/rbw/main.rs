@@ -5,6 +5,8 @@ use clap::{CommandFactory as _, Parser as _};
 
 mod actions;
 mod commands;
+#[cfg(feature = "pin")]
+mod pin;
 mod sock;
 
 #[derive(Debug, clap::Args)]
@@ -242,7 +244,7 @@ enum Opt {
     #[command(about = "Manage local PIN unlock")]
     Pin {
         #[command(subcommand)]
-        cmd: rbw::pin::cli::Pin,
+        cmd: pin::Pin,
     },
 }
 
@@ -462,11 +464,11 @@ fn main() {
         Opt::StopAgent => commands::stop_agent(),
         #[cfg(feature = "pin")]
         Opt::Pin { cmd } => match cmd {
-            rbw::pin::cli::Pin::Set { empty_pin, backend } => {
-                commands::register_pin(empty_pin, backend.clone())
+            pin::Pin::Set { empty_pin, backend } => {
+                commands::pin_set(empty_pin, backend)
             }
-            rbw::pin::cli::Pin::Clear => rbw::pin::flow::clear(),
-            rbw::pin::cli::Pin::Status => rbw::pin::flow::status(),
+            pin::Pin::Clear => commands::pin_clear(),
+            pin::Pin::Status => commands::pin_status(),
         },
         Opt::GenCompletions { shell } => {
             match shell {

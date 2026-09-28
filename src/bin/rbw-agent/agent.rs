@@ -188,7 +188,7 @@ async fn handle_request(
                 sock,
                 state.clone(),
                 *empty_pin,
-                backend.clone(),
+                *backend,
                 &environment,
             )
             .await?;

@@ -77,6 +77,40 @@ impl Clone for Vec {
     }
 }
 
+// lets aead ciphers encrypt and decrypt in place, so plaintext never has to
+// leave locked memory
+#[cfg(feature = "pin")]
+impl AsRef<[u8]> for Vec {
+    fn as_ref(&self) -> &[u8] {
+        self.data()
+    }
+}
+
+#[cfg(feature = "pin")]
+impl AsMut<[u8]> for Vec {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.data_mut()
+    }
+}
+
+#[cfg(feature = "pin")]
+impl chacha20poly1305::aead::Buffer for Vec {
+    fn extend_from_slice(
+        &mut self,
+        other: &[u8],
+    ) -> chacha20poly1305::aead::Result<()> {
+        if self.data.remaining_capacity() < other.len() {
+            return Err(chacha20poly1305::aead::Error);
+        }
+        self.extend(other.iter().copied());
+        Ok(())
+    }
+
+    fn truncate(&mut self, len: usize) {
+        Self::truncate(self, len);
+    }
+}
+
 #[derive(Clone)]
 pub struct Password {
     password: Vec,

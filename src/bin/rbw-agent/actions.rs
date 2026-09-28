@@ -376,41 +376,19 @@ async fn unlock_state(
     environment: &rbw::protocol::Environment,
 ) -> anyhow::Result<()> {
     if state.lock().await.needs_unlock() {
+        #[cfg_attr(not(feature = "pin"), allow(unused_mut))]
+        let mut first_err: Option<String> = None;
         #[cfg(feature = "pin")]
-        {
-            // Try PIN unlock first if PIN is configured
-            let config = rbw::config::Config::load_async().await?;
-            if let Some(_pin_config) = &config.pin_config {
-                match rbw::pin::flow::load_pin_state() {
-                    Ok(pin_state) => {
-                        let pin = rbw::pinentry::getpin(
-                            &config.pinentry,
-                            "PIN",
-                            &format!(
-                                "Unlock the local database for '{}'",
-                                rbw::dirs::profile()
-                            ),
-                            None,
-                            environment,
-                            true,
-                        )
-                        .await
-                        .context("failed to read PIN from pinentry")?;
-
-                        match rbw::pin::flow::unlock_with_pin(Some(&pin), &pin_state, config) {
-                            Ok((keys, org_keys)) => {
-                                unlock_success(state, keys, org_keys).await?;
-                                return Ok(());
-                            }
-                            Err(_) => {
-                                // PIN unlock failed, fall through to master password
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        // PIN not configured, fall through to master password
-                    }
-                }
+        match pin_unlock(state.clone(), environment).await {
+            Ok(PinUnlock::Unlocked) => return Ok(()),
+            Ok(PinUnlock::NotConfigured) => {}
+            // the user chose to use the master password instead
+            Err(e) if is_pinentry_cancelled(&e) => {}
+            Err(e) => {
+                log::warn!("PIN unlock failed: {e:#}");
+                first_err = Some(pinentry_error(&format!(
+                    "PIN unlock failed: {e:#}"
+                )));
             }
         }
 
@@ -449,7 +427,7 @@ async fn unlock_state(
                 // if we have set err_msg
                 Some(format!("{} (attempt {}/3)", err_msg.unwrap(), i))
             } else {
-                None
+                first_err.take()
             };
             let password = rbw::pinentry::getpin(
                 &config_pinentry().await?,
@@ -857,6 +835,110 @@ async fn config_pinentry() -> anyhow::Result<String> {
 }
 
 #[cfg(feature = "pin")]
+enum PinUnlock {
+    Unlocked,
+    NotConfigured,
+}
+
+#[cfg(feature = "pin")]
+fn is_pinentry_cancelled(e: &anyhow::Error) -> bool {
+    e.chain().any(|e| {
+        matches!(e.downcast_ref(), Some(rbw::error::Error::PinentryCancelled))
+    })
+}
+
+/// Make an arbitrary error message safe to send as a single pinentry
+/// (Assuan) command argument.
+#[cfg(feature = "pin")]
+fn pinentry_error(msg: &str) -> String {
+    const MAX_LEN: usize = 300;
+
+    let mut out = String::new();
+    for c in msg.chars() {
+        if out.len() >= MAX_LEN {
+            out.push_str("...");
+            break;
+        }
+        match c {
+            '%' => out.push_str("%25"),
+            '\r' | '\n' => out.push(' '),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[cfg(feature = "pin")]
+async fn pin_unlock(
+    state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
+    environment: &rbw::protocol::Environment,
+) -> anyhow::Result<PinUnlock> {
+    let paths = rbw::pin::backend::Paths::new();
+    let config = rbw::config::Config::load_async().await?;
+    let Some(pin_config) = config.pin_config.filter(|c| c.enable_pin) else {
+        return Ok(PinUnlock::NotConfigured);
+    };
+    if !rbw::pin::flow::is_registered(&paths) {
+        return Ok(PinUnlock::NotConfigured);
+    }
+    let pin_state = rbw::pin::flow::load_state(&paths)?;
+
+    let db = load_db().await?;
+    let Some(protected_private_key) = db.protected_private_key else {
+        return Err(anyhow::anyhow!(
+            "failed to find protected private key in db"
+        ));
+    };
+
+    let pin = if pin_state.empty_pin() {
+        None
+    } else {
+        Some(
+            rbw::pinentry::getpin(
+                &config.pinentry,
+                "PIN",
+                &format!(
+                    "Unlock the local database for '{}'",
+                    rbw::dirs::profile()
+                ),
+                None,
+                environment,
+                true,
+            )
+            .await
+            .context("failed to read PIN from pinentry")?,
+        )
+    };
+
+    let callbacks =
+        crate::pin::PinentryCallbacks::new(&config.pinentry, environment);
+    let key = tokio::task::spawn_blocking(move || {
+        rbw::pin::flow::unlock(
+            pin.as_ref(),
+            &pin_state,
+            &pin_config,
+            &paths,
+            callbacks,
+        )
+    })
+    .await??;
+
+    // this also checks that the key belongs to the current database, and
+    // decrypts the organization keys from the database rather than from a
+    // snapshot taken when the PIN was set
+    let (keys, org_keys) = rbw::actions::unlock_with_key(
+        key,
+        &protected_private_key,
+        &db.protected_org_keys,
+    )
+    .context("the PIN's key doesn't match the local database")?;
+    unlock_success(state, keys, org_keys).await?;
+
+    Ok(PinUnlock::Unlocked)
+}
+
+#[cfg(feature = "pin")]
 pub async fn pin_register(
     sock: &mut crate::sock::Sock,
     state: std::sync::Arc<tokio::sync::Mutex<crate::state::State>>,
@@ -865,34 +947,42 @@ pub async fn pin_register(
     environment: &rbw::protocol::Environment,
 ) -> anyhow::Result<()> {
     let config = rbw::config::Config::load_async().await?;
+    let pin_config = config.pin_config.unwrap_or_default();
 
-    let (keys, org_keys) = {
-        let state_guard = state.lock().await;
-        if state_guard.needs_unlock() {
-            return Err(anyhow::anyhow!("agent is locked"));
-        }
-
-        let keys = state_guard.priv_key.as_ref().unwrap().clone();
-        let org_keys = state_guard.org_keys.as_ref().unwrap().clone();
-        (keys, org_keys)
+    let Some(keys) = state.lock().await.priv_key.clone() else {
+        return Err(anyhow::anyhow!("agent is locked"));
     };
 
     let pin = if empty_pin {
         None
     } else {
-        Some(rbw::pinentry::getpin(
-            &config.pinentry,
-            "PIN",
-            "Enter PIN for quick unlock",
-            None,
-            environment,
-            true,
+        Some(
+            rbw::pinentry::getpin(
+                &config.pinentry,
+                "PIN",
+                "Enter PIN for quick unlock",
+                None,
+                environment,
+                true,
+            )
+            .await
+            .context("failed to read PIN from pinentry")?,
         )
-        .await
-        .context("failed to read PIN from pinentry")?)
     };
 
-    rbw::pin::flow::register(&keys, &org_keys, pin.as_ref(), &config, backend)?;
+    let callbacks =
+        crate::pin::PinentryCallbacks::new(&config.pinentry, environment);
+    tokio::task::spawn_blocking(move || {
+        rbw::pin::flow::register(
+            &keys,
+            pin.as_ref(),
+            &pin_config,
+            backend,
+            &rbw::pin::backend::Paths::new(),
+            callbacks,
+        )
+    })
+    .await??;
 
     respond_ack(sock).await?;
 
@@ -1030,4 +1120,24 @@ pub async fn find_ssh_private_key(
     }
 
     Err(anyhow::anyhow!("No matching private key found"))
+}
+
+#[cfg(all(test, feature = "pin"))]
+mod pin_tests {
+    use super::*;
+
+    #[test]
+    fn pin_cancel_detected_through_context() {
+        let e = anyhow::Error::from(rbw::error::Error::PinentryCancelled)
+            .context("failed to read PIN from pinentry");
+        assert!(is_pinentry_cancelled(&e));
+        assert!(!is_pinentry_cancelled(&anyhow::anyhow!("other error")));
+    }
+
+    #[test]
+    fn pin_pinentry_error_is_single_line() {
+        let msg = pinentry_error("100% broken\nsecond line\r\u{7}");
+        assert_eq!(msg, "100%25 broken second line ");
+        assert!(pinentry_error(&"x".repeat(1000)).len() < 320);
+    }
 }
