@@ -107,7 +107,7 @@ impl Backend {
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct PinBackendConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub enable_pin: bool,
     #[serde(flatten)]
     pub kdf_params: Argon2Params,
@@ -238,5 +238,50 @@ mod tests {
         let config: PinBackendConfig = serde_json::from_str("{}").unwrap();
         assert!(!config.enable_pin);
         assert_eq!(config.kdf_params, Argon2Params::default());
+    }
+
+    #[test]
+    fn pin_settings_are_top_level_config_keys() {
+        // the layout home-manager style config generators write
+        let config: crate::config::Config = serde_json::from_str(
+            r#"{
+                "email": "user@example.com",
+                "pinentry": "pinentry-mac",
+                "enable_pin": true,
+                "age_identity_file_path": "/keys/rbw_age_key",
+                "argon2_memory": 8192,
+                "argon2_iterations": 2,
+                "argon2_parallelism": 1,
+                "unrelated_key": true
+            }"#,
+        )
+        .unwrap();
+        assert!(config.pin_config.enable_pin);
+        assert_eq!(
+            config.pin_config.age_identity_file.as_deref(),
+            Some(Path::new("/keys/rbw_age_key"))
+        );
+        assert_eq!(
+            config.pin_config.kdf_params,
+            Argon2Params {
+                memory: 8192,
+                iterations: 2,
+                parallelism: 1,
+            }
+        );
+        assert_eq!(config.pinentry, "pinentry-mac");
+
+        // untouched PIN settings aren't written to new config files
+        let json =
+            serde_json::to_value(crate::config::Config::default()).unwrap();
+        for key in [
+            "enable_pin",
+            "age_identity_file_path",
+            "argon2_memory",
+            "argon2_iterations",
+            "argon2_parallelism",
+        ] {
+            assert!(json.get(key).is_none(), "{key} was serialized");
+        }
     }
 }

@@ -182,8 +182,8 @@ rbw pin clear
 
 The PIN is stretched with Argon2id. The parameters can be tuned by adding
 `argon2_memory` (in KiB, default 65536), `argon2_iterations` (default 3), and
-`argon2_parallelism` (default 4) to the `pin_config` section of the config
-file, then running `rbw pin set` again.
+`argon2_parallelism` (default 4) to the config file, then running
+`rbw pin set` again.
 
 ### Empty PIN with Hardware Tokens
 

@@ -1271,19 +1271,13 @@ pub fn config_set(key: &str, value: &str) -> anyhow::Result<()> {
         "pinentry" => config.pinentry = value.to_string(),
         #[cfg(feature = "pin")]
         "enable_pin" => {
-            config
-                .pin_config
-                .get_or_insert_with(Default::default)
-                .enable_pin = value
+            config.pin_config.enable_pin = value
                 .parse()
                 .context("failed to parse value for enable_pin")?;
         }
         #[cfg(feature = "pin")]
         "age_identity_file_path" => {
-            config
-                .pin_config
-                .get_or_insert_with(Default::default)
-                .age_identity_file = Some(value.into());
+            config.pin_config.age_identity_file = Some(value.into());
         }
         _ => return Err(anyhow::anyhow!("invalid config key: {key}")),
     }
@@ -1316,15 +1310,11 @@ pub fn config_unset(key: &str) -> anyhow::Result<()> {
         "pinentry" => config.pinentry = rbw::config::default_pinentry(),
         #[cfg(feature = "pin")]
         "enable_pin" => {
-            if let Some(pin_config) = &mut config.pin_config {
-                pin_config.enable_pin = false;
-            }
+            config.pin_config.enable_pin = false;
         }
         #[cfg(feature = "pin")]
         "age_identity_file_path" => {
-            if let Some(pin_config) = &mut config.pin_config {
-                pin_config.age_identity_file = None;
-            }
+            config.pin_config.age_identity_file = None;
         }
         _ => return Err(anyhow::anyhow!("invalid config key: {key}")),
     }

@@ -23,8 +23,8 @@ pub struct Config {
     #[serde(skip_serializing)]
     pub device_id: Option<String>,
     #[cfg(feature = "pin")]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pin_config: Option<crate::pin::backend::PinBackendConfig>,
+    #[serde(flatten)]
+    pub pin_config: crate::pin::backend::PinBackendConfig,
 }
 
 impl Default for Config {
@@ -42,7 +42,7 @@ impl Default for Config {
             client_cert_path: None,
             device_id: None,
             #[cfg(feature = "pin")]
-            pin_config: None,
+            pin_config: crate::pin::backend::PinBackendConfig::default(),
         }
     }
 }

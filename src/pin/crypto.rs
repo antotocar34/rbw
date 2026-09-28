@@ -53,11 +53,20 @@ pub struct WrappedKey {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(default)]
 pub struct Argon2Params {
-    #[serde(rename = "argon2_memory")]
+    #[serde(
+        rename = "argon2_memory",
+        skip_serializing_if = "Argon2Params::is_default_memory"
+    )]
     pub memory: u32,
-    #[serde(rename = "argon2_iterations")]
+    #[serde(
+        rename = "argon2_iterations",
+        skip_serializing_if = "Argon2Params::is_default_iterations"
+    )]
     pub iterations: u32,
-    #[serde(rename = "argon2_parallelism")]
+    #[serde(
+        rename = "argon2_parallelism",
+        skip_serializing_if = "Argon2Params::is_default_parallelism"
+    )]
     pub parallelism: u32,
 }
 
@@ -71,7 +80,24 @@ impl Default for Argon2Params {
     }
 }
 
+// these settings live in the main config file, so only write them out when
+// they've been changed
 impl Argon2Params {
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    fn is_default_memory(v: &u32) -> bool {
+        *v == Self::default().memory
+    }
+
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    fn is_default_iterations(v: &u32) -> bool {
+        *v == Self::default().iterations
+    }
+
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    fn is_default_parallelism(v: &u32) -> bool {
+        *v == Self::default().parallelism
+    }
+
     fn to_params(&self) -> Result<argon2::Params> {
         argon2::Params::new(
             self.memory,

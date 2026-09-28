@@ -876,9 +876,10 @@ async fn pin_unlock(
 ) -> anyhow::Result<PinUnlock> {
     let paths = rbw::pin::backend::Paths::new();
     let config = rbw::config::Config::load_async().await?;
-    let Some(pin_config) = config.pin_config.filter(|c| c.enable_pin) else {
+    let pin_config = config.pin_config;
+    if !pin_config.enable_pin {
         return Ok(PinUnlock::NotConfigured);
-    };
+    }
     if !rbw::pin::flow::is_registered(&paths) {
         return Ok(PinUnlock::NotConfigured);
     }
@@ -947,7 +948,7 @@ pub async fn pin_register(
     environment: &rbw::protocol::Environment,
 ) -> anyhow::Result<()> {
     let config = rbw::config::Config::load_async().await?;
-    let pin_config = config.pin_config.unwrap_or_default();
+    let pin_config = config.pin_config;
 
     let Some(keys) = state.lock().await.priv_key.clone() else {
         return Err(anyhow::anyhow!("agent is locked"));
